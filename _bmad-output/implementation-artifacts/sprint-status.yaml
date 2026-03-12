@@ -1,0 +1,81 @@
+# generated: 2026-03-09
+# project: cafe mgmt
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: {project-root}/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-03-09
+project: cafe mgmt
+project_key: NOKEY
+tracking_system: file-system
+story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Foundation, Auth & Cafe Setup
+  epic-1: in-progress
+  1-1-manager-registration-app-shell-deployment: review
+  1-2-staff-invitation-self-registration: review
+  1-3-unified-settings-checklist-time-boundaries: review
+  1-4-quick-start-cafe-template-selection: in-progress
+  1-5-onboarding-cards-setup-guidance: backlog
+  1-6-staff-first-login-orientation: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Action Feed & Daily Checklists
+  epic-2: backlog
+  2-1-action-feed-with-card-architecture: backlog
+  2-2-checklist-template-management: backlog
+  2-3-daily-checklist-completion: backlog
+  2-4-time-aware-feed-checklist-auto-selection: backlog
+  2-5-checklist-completion-history-operations-summary: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Inventory, Wastage & Comp — Connected Operations
+  epic-3: backlog
+  3-1-advanced-ingredient-configuration: backlog
+  3-2-inventory-counting-with-slider-input: backlog
+  3-3-concurrent-edits-dollar-attribution: backlog
+  3-4-low-stock-alerts-on-action-feed: backlog
+  3-5-wastage-logging-with-quick-presets: backlog
+  3-6-wastage-auto-deduct-undo: backlog
+  3-7-manager-wastage-void-correction: backlog
+  3-8-comp-logging-budget-tracking: backlog
+  3-9-comp-budget-warnings-on-feed: backlog
+  3-10-weekly-aggregation-dollar-totals: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Supplier & Recipe Management (Deferrable)
+  epic-4: backlog
+  4-1-supplier-contact-management-tap-to-call: backlog
+  4-2-call-outcome-logging-supplier-reminders: backlog
+  4-3-recipe-management-with-step-by-step-guide-cost: backlog
+  epic-4-retrospective: optional
