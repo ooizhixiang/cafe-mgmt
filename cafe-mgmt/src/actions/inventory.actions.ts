@@ -402,7 +402,7 @@ export async function createIngredientPurchase(
   input: z.infer<typeof createIngredientPurchaseSchema>
 ): Promise<ActionResult<{ id: string }>> {
   try {
-    const session = await requireRole("MANAGER");
+    const session = await requireAuth();
     const cafeId = session.user.cafeId;
     const parsed = createIngredientPurchaseSchema.safeParse(input);
     if (!parsed.success) {

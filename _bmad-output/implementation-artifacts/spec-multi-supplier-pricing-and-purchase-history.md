@@ -107,6 +107,10 @@ Three-reviewer pass (Blind Hunter, Edge Case Hunter, Acceptance Auditor) found n
 
 **KEEP instructions** (preserve in any future re-derivation): the `<frozen-after-approval>` boundary held — keep it as-is. The implementation's separation of `Ingredient.costPerUnitInCents` from per-supplier `priceInCents` (independent valuation cost vs. list price) was reaffirmed by Acceptance Auditor and must survive future iterations.
 
+### Cross-spec amendment — 2026-04-27 — `logCallOutcome` and `createIngredientPurchase` relaxed to staff
+
+A follow-up spec ([`spec-allow-staff-purchase-and-call-logging.md`](spec-allow-staff-purchase-and-call-logging.md)) deliberately reverses the manager-only gate that this spec's review patch added on `logCallOutcome`, AND additionally relaxes `createIngredientPurchase` to `requireAuth()`. The trade-off (staff can now create purchase + call rows) was made consciously after the user clarified that the cafe trust model expects counter staff to record their own work; entries remain attributable via `createdById`. The other two manager-gated invariants from this spec (no client `cafeId`/`userId`; supplier-link CRUD stays manager-only) are unchanged.
+
 ## Design Notes
 
 **Schema sketch (load-bearing):**

@@ -341,33 +341,35 @@ export function IngredientSuppliersPanel({
                           {formatRM(row.priceInCents)}/{row.unit}
                         </div>
                       </div>
-                      {isManager && (
-                        <div className="flex shrink-0 items-center gap-[var(--space-2)]">
-                          <button
-                            type="button"
-                            onClick={() => setPurchaseFor(row)}
-                            className="text-meta text-[var(--color-info)] font-medium"
-                          >
-                            Log purchase
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => startEdit(row)}
-                            className="touch-target p-1 text-[var(--text-secondary)]"
-                            aria-label="Edit"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRemoveTarget(row)}
-                            className="touch-target p-1 text-[var(--color-urgent,#dc2626)]"
-                            aria-label="Remove"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex shrink-0 items-center gap-[var(--space-2)]">
+                        <button
+                          type="button"
+                          onClick={() => setPurchaseFor(row)}
+                          className="text-meta text-[var(--color-info)] font-medium"
+                        >
+                          Log purchase
+                        </button>
+                        {isManager && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(row)}
+                              className="touch-target p-1 text-[var(--text-secondary)]"
+                              aria-label="Edit"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRemoveTarget(row)}
+                              className="touch-target p-1 text-[var(--color-urgent,#dc2626)]"
+                              aria-label="Remove"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

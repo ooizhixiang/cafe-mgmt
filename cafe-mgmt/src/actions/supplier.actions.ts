@@ -197,7 +197,7 @@ export async function logCallOutcome(
   input: z.infer<typeof logOutcomeSchema>
 ): Promise<ActionResult<void>> {
   try {
-    const session = await requireRole("MANAGER");
+    const session = await requireAuth();
     const cafeId = session.user.cafeId;
     const parsed = logOutcomeSchema.safeParse(input);
     if (!parsed.success) {
