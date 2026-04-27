@@ -6,6 +6,11 @@ import { addIngredient, updateIngredient, deleteIngredient } from "@/actions/set
 import { useToast } from "@/components/ui/toast";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Plus, Trash2, Check, X, Star } from "lucide-react";
+import {
+  IngredientSuppliersPanel,
+  type IngredientSupplierRow,
+  type IngredientPurchaseRow,
+} from "@/components/ingredients/ingredient-suppliers-panel";
 
 interface Ingredient {
   id: string;
@@ -17,8 +22,9 @@ interface Ingredient {
   category: string | null;
   lowStockThreshold: number | null;
   unitsPerContainer: number | null;
-  supplierId: string | null;
   isPinned: boolean;
+  ingredientSuppliers: IngredientSupplierRow[];
+  ingredientPurchases: IngredientPurchaseRow[];
 }
 
 interface SupplierOption {
@@ -52,7 +58,6 @@ export function IngredientConfig({
         category: data.category,
         lowStockThreshold: data.lowStockThreshold,
         unitsPerContainer: data.unitsPerContainer,
-        supplierId: data.supplierId,
         isPinned: data.isPinned,
       });
 
@@ -113,8 +118,9 @@ export function IngredientConfig({
           category: null,
           lowStockThreshold: null,
           unitsPerContainer: null,
-          supplierId: null,
           isPinned: false,
+          ingredientSuppliers: [],
+          ingredientPurchases: [],
         },
       ]);
       setNewName("");
@@ -270,7 +276,7 @@ function IngredientConfigForm({
   const [unitsPerContainer, setUnitsPerContainer] = useState(
     ingredient.unitsPerContainer?.toString() ?? ""
   );
-  const [supplierId, setSupplierId] = useState(ingredient.supplierId ?? "");
+  const [showSuppliers, setShowSuppliers] = useState(false);
 
   const nameChanged = name !== ingredient.name || unit !== ingredient.unit;
 
@@ -285,7 +291,6 @@ function IngredientConfigForm({
       category: category || null,
       lowStockThreshold: threshold ? parseInt(threshold) : null,
       unitsPerContainer: unitsPerContainer ? parseInt(unitsPerContainer) : null,
-      supplierId: supplierId || null,
     });
   }
 
@@ -398,23 +403,28 @@ function IngredientConfigForm({
             className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
           />
         </div>
-        <div className="col-span-2">
-          <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
-            Supplier
-          </label>
-          <select
-            value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
-            className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
-          >
-            <option value="">— None —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      </div>
+
+      {/* Suppliers panel */}
+      <div className="pt-[var(--space-1)]">
+        <button
+          type="button"
+          onClick={() => setShowSuppliers((v) => !v)}
+          className="text-meta text-[var(--color-info)] font-medium"
+        >
+          {showSuppliers ? "Hide all suppliers" : "Show all suppliers"}
+        </button>
+        {showSuppliers && (
+          <div className="mt-[var(--space-2)]">
+            <IngredientSuppliersPanel
+              ingredientId={ingredient.id}
+              suppliers={ingredient.ingredientSuppliers}
+              purchases={ingredient.ingredientPurchases}
+              allSuppliers={suppliers}
+              mode="manager"
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between pt-[var(--space-1)]">

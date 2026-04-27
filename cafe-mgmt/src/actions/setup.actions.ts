@@ -317,6 +317,184 @@ export async function addIngredient(
   }
 }
 
+// ─── Ingredient ↔ Supplier links ────────────────────────────
+
+const addIngredientSupplierSchema = z.object({
+  ingredientId: z.string().min(1),
+  supplierId: z.string().min(1),
+  priceInCents: z.number().int().min(0),
+  unit: z.string().min(1).max(20),
+});
+
+const updateIngredientSupplierSchema = z.object({
+  id: z.string().min(1),
+  priceInCents: z.number().int().min(0),
+  unit: z.string().min(1).max(20),
+});
+
+const removeIngredientSupplierSchema = z.object({
+  id: z.string().min(1),
+});
+
+export async function addIngredientSupplier(
+  input: z.infer<typeof addIngredientSupplierSchema>
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+
+    const parsed = addIngredientSupplierSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
+
+    // Verify ingredient + supplier both belong to this cafe
+    const [ingredient, supplier] = await Promise.all([
+      prisma.ingredient.findFirst({
+        where: { id: parsed.data.ingredientId, cafeId },
+        select: { id: true },
+      }),
+      prisma.supplier.findFirst({
+        where: { id: parsed.data.supplierId, cafeId },
+        select: { id: true },
+      }),
+    ]);
+    if (!ingredient) {
+      return { success: false, error: "Ingredient not found" };
+    }
+    if (!supplier) {
+      return { success: false, error: "Supplier not found" };
+    }
+
+    // Block duplicates
+    const existing = await prisma.ingredientSupplier.findFirst({
+      where: {
+        ingredientId: parsed.data.ingredientId,
+        supplierId: parsed.data.supplierId,
+        cafeId,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      return { success: false, error: "Supplier already added" };
+    }
+
+    const link = await prisma.ingredientSupplier.create({
+      data: {
+        ingredientId: parsed.data.ingredientId,
+        supplierId: parsed.data.supplierId,
+        cafeId,
+        priceInCents: parsed.data.priceInCents,
+        unit: parsed.data.unit,
+      },
+    });
+
+    return { success: true, data: { id: link.id } };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to add supplier link";
+    await logError({ context: "addIngredientSupplier", message });
+    return {
+      success: false,
+      error: "Something went wrong. Please try again.",
+    };
+  }
+}
+
+export async function updateIngredientSupplier(
+  input: z.infer<typeof updateIngredientSupplierSchema>
+): Promise<ActionResult<void>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+
+    const parsed = updateIngredientSupplierSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
+
+    const link = await prisma.ingredientSupplier.findFirst({
+      where: { id: parsed.data.id, cafeId },
+      select: { id: true },
+    });
+    if (!link) {
+      return { success: false, error: "Supplier not found" };
+    }
+
+    await prisma.ingredientSupplier.update({
+      where: { id: parsed.data.id },
+      data: {
+        priceInCents: parsed.data.priceInCents,
+        unit: parsed.data.unit,
+      },
+    });
+
+    return { success: true, data: undefined };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to update supplier link";
+    await logError({ context: "updateIngredientSupplier", message });
+    return {
+      success: false,
+      error: "Something went wrong. Please try again.",
+    };
+  }
+}
+
+export async function removeIngredientSupplier(
+  input: z.infer<typeof removeIngredientSupplierSchema>
+): Promise<ActionResult<void>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+
+    const parsed = removeIngredientSupplierSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
+
+    const link = await prisma.ingredientSupplier.findFirst({
+      where: { id: parsed.data.id, cafeId },
+      select: { id: true, _count: { select: { purchases: true } } },
+    });
+    if (!link) {
+      return { success: false, error: "Supplier not found" };
+    }
+
+    if (link._count.purchases > 0) {
+      return {
+        success: false,
+        error: "Has purchase history; archive supplier instead",
+      };
+    }
+
+    await prisma.ingredientSupplier.delete({
+      where: { id: parsed.data.id },
+    });
+
+    return { success: true, data: undefined };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to remove supplier link";
+    await logError({ context: "removeIngredientSupplier", message });
+    return {
+      success: false,
+      error: "Something went wrong. Please try again.",
+    };
+  }
+}
+
 export async function reorderIngredient(
   id: string,
   direction: "up" | "down"

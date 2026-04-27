@@ -18,8 +18,14 @@ const updateIngredientConfigSchema = z.object({
   category: z.string().max(50).nullable().optional(),
   lowStockThreshold: z.number().int().min(0).nullable().optional(),
   unitsPerContainer: z.number().int().min(1).nullable().optional(),
-  supplierId: z.string().nullable().optional(),
   isPinned: z.boolean().optional(),
+});
+
+const createIngredientPurchaseSchema = z.object({
+  ingredientSupplierId: z.string().min(1),
+  quantity: z.number().int().min(1),
+  unit: z.string().min(1).max(20),
+  totalPriceInCents: z.number().int().min(0),
 });
 
 const saveCountSchema = z.object({
@@ -390,3 +396,42 @@ export async function getRecipesForIngredient(
   }
 }
 
+// ─── Ingredient Purchases ──────────────────────────────────
+
+export async function createIngredientPurchase(
+  input: z.infer<typeof createIngredientPurchaseSchema>
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+    const parsed = createIngredientPurchaseSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    const link = await prisma.ingredientSupplier.findFirst({
+      where: { id: parsed.data.ingredientSupplierId, cafeId },
+    });
+    if (!link) {
+      return { success: false, error: "Ingredient supplier not found" };
+    }
+
+    const purchase = await prisma.ingredientPurchase.create({
+      data: {
+        ingredientSupplierId: parsed.data.ingredientSupplierId,
+        cafeId,
+        quantity: parsed.data.quantity,
+        unit: parsed.data.unit,
+        totalPriceInCents: parsed.data.totalPriceInCents,
+        createdById: session.user.id,
+      },
+    });
+
+    return { success: true, data: { id: purchase.id } };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    return { success: false, error: "Failed to log purchase" };
+  }
+}

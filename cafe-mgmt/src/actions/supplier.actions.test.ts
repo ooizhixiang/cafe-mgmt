@@ -18,9 +18,17 @@ const updateSupplierSchema = z.object({
   reminderDays: z.number().int().min(1).max(90).optional(),
 });
 
+const purchasePayloadSchema = z.object({
+  ingredientSupplierId: z.string().min(1),
+  quantity: z.number().int().min(1),
+  unit: z.string().min(1).max(20),
+  totalPriceInCents: z.number().int().min(0),
+});
+
 const logOutcomeSchema = z.object({
   supplierId: z.string().min(1),
   outcome: z.enum(["ORDERED", "NO_ANSWER", "CALL_BACK"]),
+  purchase: purchasePayloadSchema.optional(),
 });
 
 describe("addSupplierSchema", () => {
@@ -108,6 +116,69 @@ describe("logOutcomeSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts ORDERED with purchase payload", () => {
+    const result = logOutcomeSchema.safeParse({
+      supplierId: "sup123",
+      outcome: "ORDERED",
+      purchase: {
+        ingredientSupplierId: "link123",
+        quantity: 10,
+        unit: "kg",
+        totalPriceInCents: 5000,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts ORDERED without purchase payload", () => {
+    const result = logOutcomeSchema.safeParse({
+      supplierId: "sup123",
+      outcome: "ORDERED",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects malformed purchase payload (qty 0)", () => {
+    const result = logOutcomeSchema.safeParse({
+      supplierId: "sup123",
+      outcome: "ORDERED",
+      purchase: {
+        ingredientSupplierId: "link123",
+        quantity: 0,
+        unit: "kg",
+        totalPriceInCents: 5000,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects malformed purchase payload (negative total)", () => {
+    const result = logOutcomeSchema.safeParse({
+      supplierId: "sup123",
+      outcome: "ORDERED",
+      purchase: {
+        ingredientSupplierId: "link123",
+        quantity: 5,
+        unit: "kg",
+        totalPriceInCents: -1,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects malformed purchase payload (empty unit)", () => {
+    const result = logOutcomeSchema.safeParse({
+      supplierId: "sup123",
+      outcome: "ORDERED",
+      purchase: {
+        ingredientSupplierId: "link123",
+        quantity: 5,
+        unit: "",
+        totalPriceInCents: 100,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("Supplier reminder logic", () => {

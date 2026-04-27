@@ -7,7 +7,12 @@ import { formatCents } from "@/lib/format";
 import { StaleValueDialog } from "./stale-value-dialog";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { useToast } from "@/components/ui/toast";
-import { Minus, Plus, Check, Pencil, Trash2, Star, Phone } from "lucide-react";
+import { Minus, Plus, Check, Pencil, Trash2, Star } from "lucide-react";
+import {
+  IngredientSuppliersPanel,
+  type IngredientSupplierRow,
+  type IngredientPurchaseRow,
+} from "@/components/ingredients/ingredient-suppliers-panel";
 
 interface IngredientCount {
   id: string;
@@ -20,9 +25,8 @@ interface IngredientCount {
   costPerUnitInCents: number | null;
   unitsPerContainer: number | null;
   lowStockThreshold: number | null;
-  supplierId: string | null;
-  supplierName: string | null;
-  supplierPhone: string | null;
+  ingredientSuppliers: IngredientSupplierRow[];
+  ingredientPurchases: IngredientPurchaseRow[];
   todayCount: number | null;
   todayUpdatedAt: string | null;
   previousCount: number | null;
@@ -124,10 +128,13 @@ function QuantityStepper({
 export function InventoryList({
   initialIngredients,
   suppliers,
+  userRole,
 }: {
   initialIngredients: IngredientCount[];
   suppliers: SupplierOption[];
+  userRole: "MANAGER" | "STAFF";
 }) {
+  const isManager = userRole === "MANAGER";
   const [ingredients, setIngredients] = useState(initialIngredients);
   const [filter, setFilter] = useState<string>("all");
   const [isPending, startTransition] = useTransition();
@@ -144,7 +151,6 @@ export function InventoryList({
     unit: "",
     costPerUnitInCents: "",
     lowStockThreshold: "",
-    supplierId: "",
   });
   const [deleteTarget, setDeleteTarget] = useState<IngredientCount | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -152,6 +158,7 @@ export function InventoryList({
   const [newUnit, setNewUnit] = useState("Pieces");
   const [search, setSearch] = useState("");
   const [expandedIngId, setExpandedIngId] = useState<string | null>(null);
+  const [showSuppliersFor, setShowSuppliersFor] = useState<string | null>(null);
   const [linkedRecipes, setLinkedRecipes] = useState<Array<{ id: string; name: string; quantityPerServing: number; variationName: string | null }>>([]);
   const { toast } = useToast();
 
@@ -177,7 +184,6 @@ export function InventoryList({
       unit: ing.unit,
       costPerUnitInCents: ing.costPerUnitInCents ? (ing.costPerUnitInCents / 100).toFixed(2) : "",
       lowStockThreshold: ing.lowStockThreshold?.toString() ?? "",
-      supplierId: ing.supplierId ?? "",
     });
   }
 
@@ -200,16 +206,13 @@ export function InventoryList({
         ? parseInt(editForm.lowStockThreshold)
         : null;
 
-      const supplierIdValue = editForm.supplierId || null;
       const r2 = await updateIngredientConfig({
         id,
         costPerUnitInCents: costInCents,
         lowStockThreshold: threshold,
-        supplierId: supplierIdValue,
       });
       if (!r2.success) { toast(r2.error); return; }
 
-      const newSupplier = suppliers.find((s) => s.id === supplierIdValue);
       setIngredients((prev) =>
         prev.map((i) =>
           i.id === id
@@ -219,8 +222,6 @@ export function InventoryList({
                 unit: editForm.unit.trim(),
                 costPerUnitInCents: costInCents,
                 lowStockThreshold: threshold,
-                supplierId: supplierIdValue,
-                supplierName: newSupplier?.name ?? null,
               }
             : i
         )
@@ -463,22 +464,6 @@ export function InventoryList({
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-meta text-[var(--text-secondary)] block mb-0.5">Supplier</label>
-                  <select
-                    value={editForm.supplierId}
-                    onChange={(e) => setEditForm((f) => ({ ...f, supplierId: e.target.value }))}
-                    className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-body"
-                  >
-                    <option value="">— None —</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
                 <div className="flex items-center justify-between pt-[var(--space-1)]">
                   <button
                     onClick={() => setDeleteTarget(ing)}
@@ -574,24 +559,6 @@ export function InventoryList({
                   disabled={isPending}
                 />
 
-                {/* Supplier footer */}
-                {ing.supplierName && (
-                  <div className="mt-[var(--space-2)] flex items-center gap-[var(--space-2)]">
-                    <span className="text-meta text-[var(--text-secondary)]">
-                      Supplier: {ing.supplierName}
-                    </span>
-                    {ing.supplierPhone && (
-                      <a
-                        href={`tel:${ing.supplierPhone}`}
-                        className="touch-target flex size-9 items-center justify-center rounded-lg bg-[var(--color-info)]/10 text-[var(--color-info)] active:scale-95"
-                        title={`Call ${ing.supplierPhone}`}
-                      >
-                        <Phone size={16} />
-                      </a>
-                    )}
-                  </div>
-                )}
-
                 {/* Row 5: Used in recipes */}
                 {expandedIngId === ing.id && (
                   <div className="mt-[var(--space-2)] pt-[var(--space-2)] border-t border-[var(--border-default)]">
@@ -615,6 +582,33 @@ export function InventoryList({
                         ))}
                       </div>
                     )}
+
+                    <div className="mt-[var(--space-3)] pt-[var(--space-2)] border-t border-[var(--border-default)]">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowSuppliersFor(
+                            showSuppliersFor === ing.id ? null : ing.id
+                          )
+                        }
+                        className="text-meta text-[var(--color-info)] font-medium"
+                      >
+                        {showSuppliersFor === ing.id
+                          ? "Hide all suppliers"
+                          : "Show all suppliers"}
+                      </button>
+                      {showSuppliersFor === ing.id && (
+                        <div className="mt-[var(--space-2)]">
+                          <IngredientSuppliersPanel
+                            ingredientId={ing.id}
+                            suppliers={ing.ingredientSuppliers}
+                            purchases={ing.ingredientPurchases}
+                            allSuppliers={suppliers}
+                            mode={isManager ? "manager" : "readonly"}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </>
@@ -683,9 +677,8 @@ export function InventoryList({
                     costPerUnitInCents: null,
                     unitsPerContainer: null,
                     lowStockThreshold: null,
-                    supplierId: null,
-                    supplierName: null,
-                    supplierPhone: null,
+                    ingredientSuppliers: [],
+                    ingredientPurchases: [],
                     todayCount: null,
                     todayUpdatedAt: null,
                     previousCount: null,

@@ -55,6 +55,8 @@ model Cafe {
   recipes            Recipe[]
   salesEntries       SalesEntry[]
   grabAndGoItems     GrabAndGoItem[]
+  ingredientSuppliers IngredientSupplier[]
+  ingredientPurchases IngredientPurchase[]
 }
 
 model User {
@@ -87,6 +89,7 @@ model User {
   supplierCalls      SupplierCallLog[]    @relation("SupplierCaller")
   pushSubscriptions  PushSubscription[]
   salesEntries       SalesEntry[]         @relation("SalesCreator")
+  ingredientPurchases IngredientPurchase[] @relation("PurchaseCreator")
 
   @@index([cafeId])
   @@index([email])
@@ -153,7 +156,6 @@ model Ingredient {
   unit               String
   displayOrder       Int
   cafeId             String
-  supplierId         String?
   costPerUnitInCents Int?
   snapIncrement      Int?
   containerProfile   String?
@@ -165,7 +167,7 @@ model Ingredient {
   updatedAt          DateTime @updatedAt
 
   cafe               Cafe               @relation(fields: [cafeId], references: [id])
-  supplier           Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  ingredientSuppliers IngredientSupplier[]
   inventoryCounts    InventoryCount[]
   wastageEntries     WastageEntry[]
   compEntries        CompEntry[]
@@ -174,7 +176,6 @@ model Ingredient {
   variationIngredients   VariationIngredient[]
 
   @@index([cafeId])
-  @@index([supplierId])
 }
 
 model ChecklistTemplate {
@@ -220,7 +221,7 @@ model Supplier {
 
   cafe                Cafe                 @relation(fields: [cafeId], references: [id])
   callLogs            SupplierCallLog[]
-  ingredients         Ingredient[]
+  ingredientSuppliers IngredientSupplier[]
 
   @@index([cafeId])
 }
@@ -391,8 +392,48 @@ model SupplierCallLog {
 
   supplier  Supplier             @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   calledBy  User                 @relation("SupplierCaller", fields: [calledById], references: [id])
+  purchases IngredientPurchase[]
 
   @@index([supplierId, createdAt])
+}
+
+model IngredientSupplier {
+  id           String   @id @default(cuid())
+  ingredientId String
+  supplierId   String
+  cafeId       String
+  priceInCents Int
+  unit         String   @default("kg")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ingredient Ingredient           @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  supplier   Supplier             @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  cafe       Cafe                 @relation(fields: [cafeId], references: [id])
+  purchases  IngredientPurchase[]
+
+  @@unique([ingredientId, supplierId, cafeId])
+  @@index([cafeId])
+}
+
+model IngredientPurchase {
+  id                   String   @id @default(cuid())
+  ingredientSupplierId String
+  cafeId               String
+  quantity             Int
+  unit                 String
+  totalPriceInCents    Int
+  supplierCallLogId    String?
+  createdById          String
+  createdAt            DateTime @default(now())
+
+  ingredientSupplier IngredientSupplier @relation(fields: [ingredientSupplierId], references: [id], onDelete: Cascade)
+  supplierCallLog    SupplierCallLog?   @relation(fields: [supplierCallLogId], references: [id], onDelete: SetNull)
+  cafe               Cafe               @relation(fields: [cafeId], references: [id])
+  createdBy          User               @relation("PurchaseCreator", fields: [createdById], references: [id])
+
+  @@index([cafeId, createdAt])
+  @@index([ingredientSupplierId])
 }
 
 model Recipe {

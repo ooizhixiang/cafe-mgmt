@@ -7,6 +7,7 @@ import Link from "next/link";
 export default async function InventoryPage() {
   const session = await requireAuth();
   const cafeId = session.user.cafeId;
+  const userRole = session.user.role;
 
   const cafe = await prisma.cafe.findUnique({
     where: { id: cafeId },
@@ -28,7 +29,9 @@ export default async function InventoryPage() {
       where: { cafeId },
       orderBy: [{ isPinned: "desc" }, { displayOrder: "asc" }],
       include: {
-        supplier: { select: { id: true, name: true, phone: true } },
+        ingredientSuppliers: {
+          include: { supplier: { select: { id: true, name: true } } },
+        },
         inventoryCounts: {
           where: { countDate: { in: [today, yesterday] } },
           orderBy: { countDate: "desc" },
@@ -62,6 +65,26 @@ export default async function InventoryPage() {
     );
   }
 
+  const supplierLinkIds = ingredients.flatMap((i) =>
+    i.ingredientSuppliers.map((l) => l.id)
+  );
+  const purchases =
+    supplierLinkIds.length === 0
+      ? []
+      : await prisma.ingredientPurchase.findMany({
+          where: { ingredientSupplierId: { in: supplierLinkIds } },
+          orderBy: { createdAt: "desc" },
+          include: {
+            ingredientSupplier: {
+              select: {
+                id: true,
+                ingredientId: true,
+                supplier: { select: { name: true } },
+              },
+            },
+          },
+        });
+
   const mapped = ingredients.map((ing) => {
     const todayEntry = ing.inventoryCounts.find(
       (c) => c.countDate.toISOString().slice(0, 10) === today.toISOString().slice(0, 10)
@@ -81,9 +104,24 @@ export default async function InventoryPage() {
       costPerUnitInCents: ing.costPerUnitInCents,
       unitsPerContainer: ing.unitsPerContainer,
       lowStockThreshold: ing.lowStockThreshold,
-      supplierId: ing.supplierId,
-      supplierName: ing.supplier?.name ?? null,
-      supplierPhone: ing.supplier?.phone ?? null,
+      ingredientSuppliers: ing.ingredientSuppliers.map((link) => ({
+        id: link.id,
+        supplierId: link.supplierId,
+        supplierName: link.supplier.name,
+        priceInCents: link.priceInCents,
+        unit: link.unit,
+      })),
+      ingredientPurchases: purchases
+        .filter((p) => p.ingredientSupplier.ingredientId === ing.id)
+        .map((p) => ({
+          id: p.id,
+          ingredientSupplierId: p.ingredientSupplierId,
+          supplierName: p.ingredientSupplier.supplier.name,
+          quantity: p.quantity,
+          unit: p.unit,
+          totalPriceInCents: p.totalPriceInCents,
+          createdAt: p.createdAt.toISOString(),
+        })),
       todayCount: todayEntry?.quantity ?? null,
       todayUpdatedAt: todayEntry?.updatedAt.toISOString() ?? null,
       previousCount: yesterdayEntry?.quantity ?? null,
@@ -97,6 +135,7 @@ export default async function InventoryPage() {
       <InventoryList
         initialIngredients={mapped}
         suppliers={suppliers}
+        userRole={userRole}
       />
     </div>
   );

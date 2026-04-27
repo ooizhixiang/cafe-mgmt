@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo } from "react";
 import {
   addSupplier,
   updateSupplier,
@@ -8,8 +8,17 @@ import {
   logCallOutcome,
 } from "@/actions/supplier.actions";
 import { useToast } from "@/components/ui/toast";
-import { CallOutcomePrompt } from "./call-outcome-prompt";
+import { CallOutcomePrompt, type PurchasePayload } from "./call-outcome-prompt";
 import { Phone } from "lucide-react";
+
+interface IngredientChoice {
+  id: string;
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  priceInCents: number;
+  linkedToSupplier: boolean;
+}
 
 interface Supplier {
   id: string;
@@ -19,13 +28,22 @@ interface Supplier {
   lastOrderDate: string | null;
   reminderDays: number;
   ingredients: Array<{ id: string; name: string; unit: string }>;
+  ingredientChoices: IngredientChoice[];
+}
+
+interface AllIngredient {
+  id: string;
+  name: string;
+  unit: string;
 }
 
 export function SupplierList({
   initialSuppliers,
+  allIngredients,
   isManager,
 }: {
   initialSuppliers: Supplier[];
+  allIngredients: AllIngredient[];
   isManager: boolean;
 }) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
@@ -76,6 +94,7 @@ export function SupplierList({
           lastOrderDate: null,
           reminderDays: 7,
           ingredients: [],
+          ingredientChoices: [],
         },
       ]);
       setNewName("");
@@ -132,10 +151,11 @@ export function SupplierList({
 
   function handleCallOutcome(
     supplierId: string,
-    outcome: "ORDERED" | "NO_ANSWER" | "CALL_BACK"
+    outcome: "ORDERED" | "NO_ANSWER" | "CALL_BACK",
+    purchase?: PurchasePayload
   ) {
     startTransition(async () => {
-      const result = await logCallOutcome({ supplierId, outcome });
+      const result = await logCallOutcome({ supplierId, outcome, purchase });
       if (!result.success) {
         toast(result.error);
         return;
@@ -152,13 +172,30 @@ export function SupplierList({
       setCallPromptId(null);
       toast(
         outcome === "ORDERED"
-          ? "Order logged"
+          ? purchase
+            ? "Order + purchase logged"
+            : "Order logged"
           : outcome === "NO_ANSWER"
             ? "No answer recorded"
             : "Call back reminder set"
       );
     });
   }
+
+  const activeChoices = useMemo<IngredientChoice[]>(() => {
+    if (!callPromptId) return [];
+    const supplier = suppliers.find((s) => s.id === callPromptId);
+    if (!supplier) return [];
+    if (supplier.ingredientChoices.length > 0) return supplier.ingredientChoices;
+    return allIngredients.map((ing) => ({
+      id: ing.id, // unused — fallback choices are not real IngredientSupplier ids
+      ingredientId: ing.id,
+      ingredientName: ing.name,
+      unit: ing.unit,
+      priceInCents: 0,
+      linkedToSupplier: false,
+    }));
+  }, [callPromptId, suppliers, allIngredients]);
 
   return (
     <div className="space-y-[var(--space-2)] lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0">
@@ -294,7 +331,10 @@ export function SupplierList({
       {/* Call outcome prompt */}
       {callPromptId && (
         <CallOutcomePrompt
-          onSelect={(outcome) => handleCallOutcome(callPromptId, outcome)}
+          ingredientChoices={activeChoices}
+          onSelect={(outcome, purchase) =>
+            handleCallOutcome(callPromptId, outcome, purchase)
+          }
           onClose={() => setCallPromptId(null)}
         />
       )}

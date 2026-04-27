@@ -22,9 +22,17 @@ const updateSupplierSchema = z.object({
   reminderDays: z.number().int().min(1).max(90).optional(),
 });
 
+const purchasePayloadSchema = z.object({
+  ingredientSupplierId: z.string().min(1),
+  quantity: z.number().int().min(1),
+  unit: z.string().min(1).max(20),
+  totalPriceInCents: z.number().int().min(0),
+});
+
 const logOutcomeSchema = z.object({
   supplierId: z.string().min(1),
   outcome: z.enum(["ORDERED", "NO_ANSWER", "CALL_BACK"]),
+  purchase: purchasePayloadSchema.optional(),
 });
 
 // ─── Supplier CRUD (Story 4.1) ─────────────────────────────
@@ -47,9 +55,10 @@ export async function getSuppliers(): Promise<
     const suppliers = await prisma.supplier.findMany({
       where: { cafeId: session.user.cafeId },
       include: {
-        ingredients: {
-          select: { id: true, name: true, unit: true },
-          orderBy: { name: "asc" },
+        ingredientSuppliers: {
+          include: {
+            ingredient: { select: { id: true, name: true, unit: true } },
+          },
         },
       },
       orderBy: { displayOrder: "asc" },
@@ -57,15 +66,30 @@ export async function getSuppliers(): Promise<
 
     return {
       success: true,
-      data: suppliers.map((s) => ({
-        id: s.id,
-        name: s.name,
-        phone: s.phone,
-        notes: s.notes,
-        lastOrderDate: s.lastOrderDate?.toISOString() ?? null,
-        reminderDays: s.reminderDays,
-        ingredients: s.ingredients,
-      })),
+      data: suppliers.map((s) => {
+        const seen = new Set<string>();
+        const ingredients: Array<{ id: string; name: string; unit: string }> = [];
+        for (const link of s.ingredientSuppliers) {
+          if (seen.has(link.ingredient.id)) continue;
+          seen.add(link.ingredient.id);
+          ingredients.push({
+            id: link.ingredient.id,
+            name: link.ingredient.name,
+            unit: link.ingredient.unit,
+          });
+        }
+        ingredients.sort((a, b) => a.name.localeCompare(b.name));
+
+        return {
+          id: s.id,
+          name: s.name,
+          phone: s.phone,
+          notes: s.notes,
+          lastOrderDate: s.lastOrderDate?.toISOString() ?? null,
+          reminderDays: s.reminderDays,
+          ingredients,
+        };
+      }),
     };
   } catch {
     return { success: false, error: "Failed to load suppliers" };
@@ -187,21 +211,50 @@ export async function logCallOutcome(
       return { success: false, error: "Supplier not found" };
     }
 
-    await prisma.supplierCallLog.create({
-      data: {
-        supplierId: parsed.data.supplierId,
-        outcome: parsed.data.outcome,
-        calledById: session.user.id,
-      },
-    });
+    // Purchase payload only valid when outcome is ORDERED
+    const purchase =
+      parsed.data.outcome === "ORDERED" ? parsed.data.purchase : undefined;
 
-    // Update lastOrderDate when ORDERED
-    if (parsed.data.outcome === "ORDERED") {
-      await prisma.supplier.update({
-        where: { id: parsed.data.supplierId },
-        data: { lastOrderDate: new Date() },
+    if (purchase) {
+      const link = await prisma.ingredientSupplier.findFirst({
+        where: { id: purchase.ingredientSupplierId, cafeId, supplierId: parsed.data.supplierId },
+        select: { id: true },
       });
+      if (!link) {
+        return { success: false, error: "Ingredient supplier not found" };
+      }
     }
+
+    await prisma.$transaction(async (tx) => {
+      const callLog = await tx.supplierCallLog.create({
+        data: {
+          supplierId: parsed.data.supplierId,
+          outcome: parsed.data.outcome,
+          calledById: session.user.id,
+        },
+      });
+
+      if (parsed.data.outcome === "ORDERED") {
+        await tx.supplier.update({
+          where: { id: parsed.data.supplierId },
+          data: { lastOrderDate: new Date() },
+        });
+
+        if (purchase) {
+          await tx.ingredientPurchase.create({
+            data: {
+              ingredientSupplierId: purchase.ingredientSupplierId,
+              cafeId,
+              quantity: purchase.quantity,
+              unit: purchase.unit,
+              totalPriceInCents: purchase.totalPriceInCents,
+              supplierCallLogId: callLog.id,
+              createdById: session.user.id,
+            },
+          });
+        }
+      }
+    });
 
     return { success: true, data: undefined };
   } catch {
