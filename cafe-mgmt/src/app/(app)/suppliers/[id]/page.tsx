@@ -13,17 +13,24 @@ export default async function SupplierDetailPage({
   const cafeId = session.user.cafeId;
   const isManager = session.user.role === "MANAGER";
 
-  const supplier = await prisma.supplier.findFirst({
-    where: { id, cafeId },
-    include: {
-      ingredientSuppliers: {
-        include: {
-          ingredient: { select: { id: true, name: true, unit: true } },
+  const [supplier, allIngredients] = await Promise.all([
+    prisma.supplier.findFirst({
+      where: { id, cafeId },
+      include: {
+        ingredientSuppliers: {
+          include: {
+            ingredient: { select: { id: true, name: true, unit: true } },
+          },
+          orderBy: { ingredient: { name: "asc" } },
         },
-        orderBy: { ingredient: { name: "asc" } },
       },
-    },
-  });
+    }),
+    prisma.ingredient.findMany({
+      where: { cafeId },
+      select: { id: true, name: true, unit: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   if (!supplier) {
     notFound();
@@ -76,6 +83,7 @@ export default async function SupplierDetailPage({
       <SupplierDetail
         supplier={supplierData}
         purchases={purchaseData}
+        allIngredients={allIngredients}
         mode={isManager ? "manager" : "readonly"}
       />
     </div>
