@@ -27,3 +27,23 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 - **Optimistic `createdAt` uses client clock.** Newly logged purchases use `new Date().toISOString()` for in-memory sort, which can place them mid-list when client clock skews behind server. Refresh fixes it; cosmetic. Either accept refresh, or assign monotonically-increasing client-side sequence ids that always sort first until the next server refetch.
   - Found by: Blind Hunter, Edge Case Hunter
   - Severity: low (degraded UX)
+
+## From spec-purchases-tab (review iteration 1, 2026-04-27)
+
+- **`totalPriceInCents` and inline-link `priceInCents` of `0` are accepted.** Schema is `int ≥ 0` (matches spec). A line with quantity ≥ 1 and total RM `0.00` persists a free-purchase row, polluting weighted-average cost reporting. Inline-link creation at price 0 is similarly accepted. Decide whether to enforce `> 0`, treat 0 as a "freebie" first-class concept, or warn on entry.
+  - Found by: Edge Case Hunter
+  - Severity: medium (data quality)
+
+- **Server-side `unit` on linked rows is not validated against the `IngredientSupplier.unit` snapshot.** When the request supplies an `ingredientSupplierId`, the server writes `line.unit` straight onto the purchase row without comparing to the link's stored unit. A client (legit override or tampered) can send a divergent unit. Per-supplier per-unit cost analytics silently mix kg/g/ml. Decide whether to reject mismatch, snap to the link's unit, or warn.
+  - Found by: Blind Hunter, Edge Case Hunter
+  - Severity: medium (data quality)
+
+- ~~**Concurrent inline-link race silently discards the staff-entered `priceInCents`/`unit`.**~~ **Resolved 2026-04-27** by `spec-restrict-purchase-picker-to-linked` — the inline-link-creation path was removed entirely, retiring this race surface.
+
+- **Stale `IngredientSupplier` reference between page render and submit returns generic error.** If a manager unlinks an `IngredientSupplier` between the time staff opened `/purchases` and the time they submit, the whole batch fails with `"Ingredient supplier link not found"` and no indication of which line is stale. User must reload. Improve by naming the offending line, or by retrying that line through the unlinked-creation path with the user's typed price.
+  - Found by: Edge Case Hunter
+  - Severity: low (rare race; recoverable by reload)
+
+- **Bulk purchases do not trigger `checkThresholds` recompute.** Consistent with the existing single-purchase `createIngredientPurchase` action (which also doesn't), so no regression — but worth a holistic decision: should logging stock arriving from a supplier feed into low-stock alert recomputation? Currently inventory counts and purchases are decoupled. Decide product-level whether they should be linked.
+  - Found by: Blind Hunter, Edge Case Hunter, Acceptance Auditor
+  - Severity: low (consistent with existing behavior)

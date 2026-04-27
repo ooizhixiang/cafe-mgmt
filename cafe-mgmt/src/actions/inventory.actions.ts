@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "@/lib/auth";
 import { getCafeNow } from "@/lib/format";
 import { calculateDollarValue } from "@/lib/dollar-attribution";
 import { checkThresholds } from "@/lib/threshold-check";
+import { logError } from "@/lib/log-error";
 import type { ActionResult } from "@/types";
 
 // ─── Schemas ────────────────────────────────────────────────
@@ -26,6 +27,21 @@ const createIngredientPurchaseSchema = z.object({
   quantity: z.number().int().min(1),
   unit: z.string().min(1).max(20),
   totalPriceInCents: z.number().int().min(0),
+});
+
+const bulkCreateIngredientPurchasesSchema = z.object({
+  supplierId: z.string().min(1),
+  lines: z
+    .array(
+      z.object({
+        ingredientId: z.string().min(1),
+        ingredientSupplierId: z.string().min(1),
+        quantity: z.number().int().min(1),
+        unit: z.string().min(1).max(20),
+        totalPriceInCents: z.number().int().min(0),
+      })
+    )
+    .min(1),
 });
 
 const saveCountSchema = z.object({
@@ -433,5 +449,115 @@ export async function createIngredientPurchase(
       return { success: false, error: "Unauthorized" };
     }
     return { success: false, error: "Failed to log purchase" };
+  }
+}
+
+export async function bulkCreateIngredientPurchases(
+  input: z.infer<typeof bulkCreateIngredientPurchasesSchema>
+): Promise<ActionResult<{ ids: string[] }>> {
+  try {
+    const session = await requireAuth();
+    const cafeId = session.user.cafeId;
+    const userId = session.user.id;
+
+    const parsed = bulkCreateIngredientPurchasesSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
+    }
+
+    const { supplierId, lines } = parsed.data;
+
+    // Reject duplicate ingredientId across lines
+    const seen = new Set<string>();
+    for (const line of lines) {
+      if (seen.has(line.ingredientId)) {
+        return {
+          success: false,
+          error: "Duplicate ingredient lines — combine the lines",
+        };
+      }
+      seen.add(line.ingredientId);
+    }
+
+    // Verify supplier belongs to this cafe
+    const supplier = await prisma.supplier.findFirst({
+      where: { id: supplierId, cafeId },
+      select: { id: true },
+    });
+    if (!supplier) {
+      return { success: false, error: "Supplier not found" };
+    }
+
+    const ingredientIds = lines.map((l) => l.ingredientId);
+
+    const ids = await prisma.$transaction(async (tx) => {
+      // Pre-load ingredients (cafe-scoped) — reject if any belongs to another cafe
+      const ingredients = await tx.ingredient.findMany({
+        where: { id: { in: ingredientIds }, cafeId },
+        select: { id: true, name: true },
+      });
+      const foundIngredients = new Map(ingredients.map((i) => [i.id, i]));
+      for (const line of lines) {
+        if (!foundIngredients.has(line.ingredientId)) {
+          throw new Error("Ingredient not found");
+        }
+      }
+
+      // Pre-load existing IngredientSupplier rows for this supplier+cafe
+      const existingLinks = await tx.ingredientSupplier.findMany({
+        where: {
+          supplierId,
+          cafeId,
+          ingredientId: { in: ingredientIds },
+        },
+      });
+      const linkByIngredient = new Map(
+        existingLinks.map((l) => [l.ingredientId, l])
+      );
+
+      const purchaseIds: string[] = [];
+
+      for (const line of lines) {
+        const existing = linkByIngredient.get(line.ingredientId);
+        if (!existing || existing.id !== line.ingredientSupplierId) {
+          throw new Error("Ingredient supplier link not found");
+        }
+
+        const purchase = await tx.ingredientPurchase.create({
+          data: {
+            ingredientSupplierId: existing.id,
+            cafeId,
+            quantity: line.quantity,
+            unit: line.unit,
+            totalPriceInCents: line.totalPriceInCents,
+            createdById: userId,
+          },
+        });
+        purchaseIds.push(purchase.id);
+      }
+
+      return purchaseIds;
+    });
+
+    return { success: true, data: { ids } };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    if (e instanceof Error) {
+      // Surface friendly errors thrown during the transaction
+      if (
+        e.message === "Ingredient not found" ||
+        e.message === "Ingredient supplier link not found"
+      ) {
+        return { success: false, error: e.message };
+      }
+    }
+    const message = e instanceof Error ? e.message : "Failed to log purchases";
+    await logError({ context: "bulkCreateIngredientPurchases", message });
+    return { success: false, error: "Failed to log purchases" };
   }
 }

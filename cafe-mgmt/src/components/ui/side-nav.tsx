@@ -14,6 +14,7 @@ import {
   CupSoda,
   Coffee,
   BarChart3,
+  ShoppingCart,
 } from "lucide-react";
 import type { Role } from "@/generated/prisma/enums";
 
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/suppliers", label: "Suppliers", icon: Truck },
   { href: "/recipes", label: "Recipes", icon: UtensilsCrossed },
   { href: "/grab-and-go", label: "Grab & Go", icon: Coffee },
+  { href: "/purchases", label: "Purchases", icon: ShoppingCart },
   { href: "/revenue", label: "Revenue", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
