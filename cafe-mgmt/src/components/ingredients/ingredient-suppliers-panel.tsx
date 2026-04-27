@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { Pencil, Plus, Trash2, X, Check } from "lucide-react";
 import {
   addIngredientSupplier,
@@ -274,7 +275,12 @@ export function IngredientSuppliersPanel({
                   {isEditing ? (
                     <div className="space-y-[var(--space-2)]">
                       <div className="text-meta font-medium">
-                        {row.supplierName}
+                        <Link
+                          href={`/suppliers/${row.supplierId}`}
+                          className="hover:underline"
+                        >
+                          {row.supplierName}
+                        </Link>
                       </div>
                       <div className="grid grid-cols-2 gap-[var(--space-2)]">
                         <div>
@@ -324,7 +330,12 @@ export function IngredientSuppliersPanel({
                     <div className="flex items-center justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="text-meta font-medium truncate">
-                          {row.supplierName}
+                          <Link
+                            href={`/suppliers/${row.supplierId}`}
+                            className="hover:underline"
+                          >
+                            {row.supplierName}
+                          </Link>
                         </div>
                         <div className="text-meta text-[var(--text-secondary)]">
                           {formatRM(row.priceInCents)}/{row.unit}

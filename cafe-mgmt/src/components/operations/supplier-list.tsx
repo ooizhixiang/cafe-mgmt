@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition, useMemo } from "react";
+import Link from "next/link";
 import {
   addSupplier,
   updateSupplier,
@@ -259,7 +260,12 @@ export function SupplierList({
             <>
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <span className="text-body font-medium">{supplier.name}</span>
+                  <Link
+                    href={`/suppliers/${supplier.id}`}
+                    className="text-body font-medium hover:underline"
+                  >
+                    {supplier.name}
+                  </Link>
                   {supplier.notes && (
                     <p className="text-meta text-[var(--text-secondary)] mt-[var(--space-1)]">
                       {supplier.notes}

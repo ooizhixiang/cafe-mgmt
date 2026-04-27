@@ -8,8 +8,8 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
   - Found by: Blind Hunter
   - Severity: medium (UX regression for staff)
 
-- **Purchase-history fetch is unbounded on `/inventory` and `/settings/ingredients`.** Both pages query `prisma.ingredientPurchase.findMany({ where: { ingredientSupplierId: { in: supplierLinkIds } } })` with no `take`/cursor/pagination/date-window. Within a year of active use the payload becomes the slowest part of the page. Add pagination or limit to last N (e.g., 20) per ingredient.
-  - Found by: Blind Hunter, Edge Case Hunter
+- **Purchase-history fetch is unbounded on `/inventory`, `/settings/ingredients`, and `/suppliers/[id]`.** All three pages query `prisma.ingredientPurchase.findMany({ where: { ingredientSupplierId: { in: linkIds } } })` with no `take`/cursor/pagination/date-window. Within a year of active use the payload becomes the slowest part of the page. Add pagination or limit to last N (e.g., 20) per ingredient or per supplier. (Re-flagged on the supplier detail page review 2026-04-27.)
+  - Found by: Blind Hunter, Edge Case Hunter (across two reviews)
   - Severity: medium (performance, future)
 
 - **`priceInCents` and `totalPriceInCents` are PG `INTEGER` (32-bit max ~RM 21.4M) with no upper bound in zod.** Fat-finger inputs above the column max throw an opaque DB error rather than a friendly validation message. Either widen the column to `BIGINT` or add a zod `.max()` and a friendly UI guard.
