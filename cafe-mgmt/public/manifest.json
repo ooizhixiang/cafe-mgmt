@@ -1,0 +1,9 @@
+{
+  "name": "Cafe Management",
+  "short_name": "Cafe Mgmt",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "icons": []
+}

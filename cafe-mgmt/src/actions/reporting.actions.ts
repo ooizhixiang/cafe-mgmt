@@ -1,0 +1,139 @@
+"use server";
+
+import { prisma } from "@/lib/db";
+import { requireAuth, requireRole } from "@/lib/auth";
+import { getCafeNow } from "@/lib/format";
+import type { ActionResult } from "@/types";
+
+interface WeekData {
+  weekStart: string; // ISO date
+  weekEnd: string;
+  wastageTotalInCents: number;
+  compTotalInCents: number;
+}
+
+function getWeekStart(date: Date, resetDay: number): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const currentDay = d.getDay();
+  const diff = (currentDay - resetDay + 7) % 7;
+  d.setDate(d.getDate() - diff);
+  return d;
+}
+
+export async function getWeeklyTotals(): Promise<ActionResult<WeekData[]>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+
+    const cafe = await prisma.cafe.findUnique({
+      where: { id: cafeId },
+      select: { timezone: true },
+    });
+    if (!cafe) return { success: false, error: "Cafe not found" };
+
+    const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
+    const resetDay = budget?.resetDay ?? 1; // Default Monday
+
+    const now = getCafeNow(cafe.timezone);
+    const weeks: WeekData[] = [];
+
+    for (let i = 0; i < 5; i++) {
+      const refDate = new Date(now);
+      refDate.setDate(refDate.getDate() - i * 7);
+      const weekStart = getWeekStart(refDate, resetDay);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+
+      const [wastageResult, compResult] = await Promise.all([
+        prisma.wastageEntry.aggregate({
+          where: {
+            cafeId,
+            deletedAt: null,
+            voidedAt: null,
+            createdAt: { gte: weekStart, lt: weekEnd },
+          },
+          _sum: { dollarValueInCents: true },
+        }),
+        prisma.compEntry.aggregate({
+          where: {
+            cafeId,
+            deletedAt: null,
+            voidedAt: null,
+            createdAt: { gte: weekStart, lt: weekEnd },
+          },
+          _sum: { dollarValueInCents: true },
+        }),
+      ]);
+
+      weeks.push({
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: weekEnd.toISOString().slice(0, 10),
+        wastageTotalInCents: wastageResult._sum.dollarValueInCents ?? 0,
+        compTotalInCents: compResult._sum.dollarValueInCents ?? 0,
+      });
+    }
+
+    return { success: true, data: weeks };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    return { success: false, error: "Failed to load weekly totals" };
+  }
+}
+
+export async function getCurrentWeekTotals(): Promise<
+  ActionResult<{
+    wastageTotalInCents: number;
+    compTotalInCents: number;
+  }>
+> {
+  try {
+    const session = await requireAuth();
+    const cafeId = session.user.cafeId;
+
+    const cafe = await prisma.cafe.findUnique({
+      where: { id: cafeId },
+      select: { timezone: true },
+    });
+    if (!cafe) return { success: false, error: "Cafe not found" };
+
+    const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
+    const resetDay = budget?.resetDay ?? 1;
+
+    const now = getCafeNow(cafe.timezone);
+    const weekStart = getWeekStart(now, resetDay);
+
+    const [wastageResult, compResult] = await Promise.all([
+      prisma.wastageEntry.aggregate({
+        where: {
+          cafeId,
+          deletedAt: null,
+          voidedAt: null,
+          createdAt: { gte: weekStart },
+        },
+        _sum: { dollarValueInCents: true },
+      }),
+      prisma.compEntry.aggregate({
+        where: {
+          cafeId,
+          deletedAt: null,
+          voidedAt: null,
+          createdAt: { gte: weekStart },
+        },
+        _sum: { dollarValueInCents: true },
+      }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        wastageTotalInCents: wastageResult._sum.dollarValueInCents ?? 0,
+        compTotalInCents: compResult._sum.dollarValueInCents ?? 0,
+      },
+    };
+  } catch {
+    return { success: false, error: "Failed to load totals" };
+  }
+}

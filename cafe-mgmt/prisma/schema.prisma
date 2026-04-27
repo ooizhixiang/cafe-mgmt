@@ -1,0 +1,540 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  MANAGER
+  STAFF
+}
+
+enum Period {
+  OPENING
+  MID_DAY
+  CLOSING
+}
+
+model Cafe {
+  id        String   @id @default(cuid())
+  name      String   @default("My Cafe")
+  timezone  String   @default("America/New_York")
+
+  // Checklist time boundaries (HH:mm format, null = use defaults)
+  openingStart String?
+  openingEnd   String?
+  midDayStart  String?
+  midDayEnd    String?
+  closingStart String?
+  closingEnd   String?
+
+  // Template selection (null = not selected)
+  templateSelected String?
+
+  // Onboarding steps completed (Story 1.5)
+  onboardingCompletedSteps String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users              User[]
+  invites            Invite[]
+  errorLogs          ErrorLog[]
+  ingredients        Ingredient[]
+  checklistTemplates ChecklistTemplate[]
+  suppliers          Supplier[]
+  dailyChecklists    DailyChecklist[]
+  inventoryCounts    InventoryCount[]
+  feedAlerts         FeedAlert[]
+  wastageEntries     WastageEntry[]
+  compEntries        CompEntry[]
+  compBudget         CompBudget?
+  recipes            Recipe[]
+  salesEntries       SalesEntry[]
+  grabAndGoItems     GrabAndGoItem[]
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String
+  name                String
+  role                Role      @default(STAFF)
+  cafeId              String
+  isActive            Boolean   @default(true)
+  mustChangePassword  Boolean   @default(false)
+  firstLoginAt            DateTime?
+  orientationDismissedAt  DateTime?
+  lastSeenAt              DateTime?
+  darkMode                Boolean   @default(false)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  cafe               Cafe               @relation(fields: [cafeId], references: [id])
+  sessions           Session[]
+  errorLogs          ErrorLog[]
+  completedItems     DailyChecklistItem[] @relation("CompletedBy")
+  confirmedCounts    InventoryCount[]     @relation("ConfirmedCounts")
+  wastageCreated     WastageEntry[]       @relation("WastageCreator")
+  wastageVoided      WastageEntry[]       @relation("WastageVoider")
+  compCreated        CompEntry[]          @relation("CompCreator")
+  compVoided         CompEntry[]          @relation("CompVoider")
+  supplierCalls      SupplierCallLog[]    @relation("SupplierCaller")
+  pushSubscriptions  PushSubscription[]
+  salesEntries       SalesEntry[]         @relation("SalesCreator")
+
+  @@index([cafeId])
+  @@index([email])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([email])
+}
+
+model Invite {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  cafeId    String
+  role      Role      @default(STAFF)
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  cafe Cafe @relation(fields: [cafeId], references: [id])
+
+  @@index([code])
+  @@index([cafeId])
+}
+
+model ErrorLog {
+  id        String   @id @default(cuid())
+  context   String
+  message   String
+  stack     String?
+  userId    String?
+  cafeId    String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+  cafe Cafe? @relation(fields: [cafeId], references: [id])
+
+  @@index([cafeId])
+  @@index([createdAt])
+}
+
+model Ingredient {
+  id                 String   @id @default(cuid())
+  name               String
+  unit               String
+  displayOrder       Int
+  cafeId             String
+  supplierId         String?
+  costPerUnitInCents Int?
+  snapIncrement      Int?
+  containerProfile   String?
+  category           String?
+  isPinned           Boolean  @default(false)
+  lowStockThreshold  Int?
+  unitsPerContainer  Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  cafe               Cafe               @relation(fields: [cafeId], references: [id])
+  supplier           Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  inventoryCounts    InventoryCount[]
+  wastageEntries     WastageEntry[]
+  compEntries        CompEntry[]
+  feedAlerts         FeedAlert[]
+  recipeIngredients      RecipeIngredient[]
+  variationIngredients   VariationIngredient[]
+
+  @@index([cafeId])
+  @@index([supplierId])
+}
+
+model ChecklistTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  period    Period
+  cafeId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cafe             Cafe                    @relation(fields: [cafeId], references: [id])
+  items            ChecklistTemplateItem[]
+  dailyChecklists  DailyChecklist[]
+
+  @@index([cafeId])
+}
+
+model ChecklistTemplateItem {
+  id                  String  @id @default(cuid())
+  text                String
+  displayOrder        Int
+  notes               String?
+  role                Role?
+  linkRoute           String?
+  checklistTemplateId String
+
+  template ChecklistTemplate @relation(fields: [checklistTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([checklistTemplateId])
+}
+
+model Supplier {
+  id            String    @id @default(cuid())
+  name          String
+  phone         String?
+  notes         String?
+  displayOrder  Int
+  cafeId        String
+  lastOrderDate DateTime?
+  reminderDays  Int       @default(7)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  cafe                Cafe                 @relation(fields: [cafeId], references: [id])
+  callLogs            SupplierCallLog[]
+  ingredients         Ingredient[]
+
+  @@index([cafeId])
+}
+
+model DailyChecklist {
+  id                    String   @id @default(cuid())
+  cafeId                String
+  date                  DateTime @db.Date
+  period                Period
+  checklistTemplateId   String
+  createdAt             DateTime @default(now())
+
+  cafe     Cafe                    @relation(fields: [cafeId], references: [id])
+  template ChecklistTemplate       @relation(fields: [checklistTemplateId], references: [id])
+  items    DailyChecklistItem[]
+
+  @@unique([cafeId, date, period])
+  @@index([cafeId, date])
+}
+
+model DailyChecklistItem {
+  id                      String    @id @default(cuid())
+  dailyChecklistId        String
+  checklistTemplateItemId String?
+  text                    String
+  displayOrder            Int
+  notes                   String?
+  role                    Role?
+  linkRoute               String?
+  completedAt             DateTime?
+  completedById           String?
+
+  dailyChecklist DailyChecklist @relation(fields: [dailyChecklistId], references: [id], onDelete: Cascade)
+  completedBy    User?          @relation("CompletedBy", fields: [completedById], references: [id])
+
+  @@index([dailyChecklistId])
+}
+
+// ─── Epic 3: Inventory & Wastage ────────────────────────────
+
+enum AlertType {
+  LOW_STOCK
+  COMP_WARNING
+}
+
+enum AlertSeverity {
+  WARNING
+  URGENT
+}
+
+enum WastageReason {
+  SPILLED
+  EXPIRED
+  INCORRECT
+}
+
+model InventoryCount {
+  id                String   @id @default(cuid())
+  ingredientId      String
+  cafeId            String
+  countDate         DateTime @db.Date
+  quantity          Int
+  dollarValueInCents Int?
+  confirmedById     String
+  confirmedAt       DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  ingredient  Ingredient @relation(fields: [ingredientId], references: [id])
+  cafe        Cafe       @relation(fields: [cafeId], references: [id])
+  confirmedBy User       @relation("ConfirmedCounts", fields: [confirmedById], references: [id])
+
+  @@unique([ingredientId, countDate])
+  @@index([ingredientId, countDate])
+  @@index([cafeId])
+}
+
+model FeedAlert {
+  id           String        @id @default(cuid())
+  cafeId       String
+  type         AlertType
+  ingredientId String?
+  title        String
+  message      String
+  severity     AlertSeverity
+  resolvedAt   DateTime?
+  createdAt    DateTime      @default(now())
+
+  cafe       Cafe        @relation(fields: [cafeId], references: [id])
+  ingredient Ingredient? @relation(fields: [ingredientId], references: [id])
+
+  @@index([cafeId, resolvedAt])
+}
+
+model WastageEntry {
+  id                 String        @id @default(cuid())
+  cafeId             String
+  ingredientId       String
+  quantity           Int
+  reason             WastageReason
+  dollarValueInCents Int
+  createdById        String
+  deletedAt          DateTime?
+  voidedAt           DateTime?
+  voidedById         String?
+  voidReason         String?
+  originalQuantity   Int?
+  correctedQuantity  Int?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  cafe       Cafe       @relation(fields: [cafeId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  createdBy  User       @relation("WastageCreator", fields: [createdById], references: [id])
+  voidedBy   User?      @relation("WastageVoider", fields: [voidedById], references: [id])
+
+  @@index([cafeId, createdAt])
+}
+
+model CompEntry {
+  id                 String    @id @default(cuid())
+  cafeId             String
+  ingredientId       String
+  quantity           Int
+  reason             String
+  dollarValueInCents Int
+  createdById        String
+  flaggedForReview   Boolean   @default(false)
+  deletedAt          DateTime?
+  voidedAt           DateTime?
+  voidedById         String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  cafe       Cafe       @relation(fields: [cafeId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  createdBy  User       @relation("CompCreator", fields: [createdById], references: [id])
+  voidedBy   User?      @relation("CompVoider", fields: [voidedById], references: [id])
+
+  @@index([cafeId, createdAt])
+}
+
+model CompBudget {
+  id            String   @id @default(cuid())
+  cafeId        String   @unique
+  amountInCents Int
+  resetDay      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  cafe Cafe @relation(fields: [cafeId], references: [id])
+}
+
+// ─── Epic 4: Suppliers & Recipes ────────────────────────────
+
+enum CallOutcome {
+  ORDERED
+  NO_ANSWER
+  CALL_BACK
+}
+
+model SupplierCallLog {
+  id         String      @id @default(cuid())
+  supplierId String
+  outcome    CallOutcome
+  calledById String
+  createdAt  DateTime    @default(now())
+
+  supplier  Supplier             @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  calledBy  User                 @relation("SupplierCaller", fields: [calledById], references: [id])
+
+  @@index([supplierId, createdAt])
+}
+
+model Recipe {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  servingSize String?
+  imageUrl       String?
+  notes          String?
+  category             String?
+  sellingPriceInCents  Int?
+  discontinued         Boolean  @default(false)
+  cafeId         String
+  createdAt      DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cafe        Cafe               @relation(fields: [cafeId], references: [id])
+  ingredients RecipeIngredient[]
+  steps       RecipeStep[]
+  variations  RecipeVariation[]
+
+  @@index([cafeId])
+}
+
+model RecipeIngredient {
+  id                      String   @id @default(cuid())
+  recipeId                String
+  ingredientId            String
+  quantityPerServing      Int
+  subtotalOverrideInCents Int?
+  createdAt               DateTime @default(now())
+
+  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@index([recipeId])
+}
+
+model RecipeStep {
+  id          String   @id @default(cuid())
+  recipeId    String
+  stepNumber  Int
+  instruction String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
+}
+
+model RecipeVariation {
+  id                    String   @id @default(cuid())
+  recipeId              String
+  name                  String
+  sellingPriceInCents   Int?
+  createdAt             DateTime @default(now())
+
+  recipe      Recipe                 @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredients VariationIngredient[]
+  steps       VariationStep[]
+
+  @@index([recipeId])
+}
+
+model VariationStep {
+  id          String   @id @default(cuid())
+  variationId String
+  stepNumber  Int
+  instruction String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variation RecipeVariation @relation(fields: [variationId], references: [id], onDelete: Cascade)
+
+  @@index([variationId])
+}
+
+model VariationIngredient {
+  id                      String   @id @default(cuid())
+  variationId             String
+  ingredientId            String
+  quantityPerServing      Int
+  subtotalOverrideInCents Int?
+  createdAt               DateTime @default(now())
+
+  variation  RecipeVariation @relation(fields: [variationId], references: [id], onDelete: Cascade)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id])
+
+  @@index([variationId])
+}
+
+// ─── Grab & Go Items ────────────────────────────────────────
+
+model GrabAndGoItem {
+  id            String   @id @default(cuid())
+  name          String
+  imageUrl      String?
+  priceInCents  Int      @default(0)
+  stockCount    Int      @default(0)
+  cafeId        String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  cafe Cafe @relation(fields: [cafeId], references: [id])
+
+  @@index([cafeId])
+}
+
+// ─── Sales Tracking ─────────────────────────────────────────
+
+model SalesEntry {
+  id              String   @id @default(cuid())
+  cafeId          String
+  recipeId        String
+  recipeName      String
+  qtySold         Int
+  revenueInCents  Int      @default(0)
+  costInCents     Int      @default(0)
+  saleDate        DateTime @db.Date
+  createdById     String
+  createdAt       DateTime @default(now())
+
+  cafe      Cafe   @relation(fields: [cafeId], references: [id])
+  createdBy User   @relation("SalesCreator", fields: [createdById], references: [id])
+
+  @@index([cafeId, saleDate])
+  @@index([recipeId, saleDate])
+}
+
+// ─── Epic 5: Phase 2 Features ───────────────────────────────
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
