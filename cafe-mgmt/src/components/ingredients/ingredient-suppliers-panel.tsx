@@ -8,6 +8,7 @@ import {
   removeIngredientSupplier,
 } from "@/actions/setup.actions";
 import { createIngredientPurchase } from "@/actions/inventory.actions";
+import { parseRMToCents } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 
@@ -107,8 +108,8 @@ export function IngredientSuppliersPanel({
   }
 
   function handleSaveEdit(row: IngredientSupplierRow) {
-    const priceFloat = parseFloat(editPrice);
-    if (!Number.isFinite(priceFloat) || priceFloat < 0) {
+    const priceInCents = parseRMToCents(editPrice);
+    if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
     }
@@ -117,7 +118,6 @@ export function IngredientSuppliersPanel({
       toast("Unit required");
       return;
     }
-    const priceInCents = Math.round(priceFloat * 100);
 
     startTransition(async () => {
       const result = await updateIngredientSupplier({
@@ -144,8 +144,8 @@ export function IngredientSuppliersPanel({
       toast("Choose a supplier");
       return;
     }
-    const priceFloat = parseFloat(addPrice);
-    if (!Number.isFinite(priceFloat) || priceFloat < 0) {
+    const priceInCents = parseRMToCents(addPrice);
+    if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
     }
@@ -154,7 +154,6 @@ export function IngredientSuppliersPanel({
       toast("Unit required");
       return;
     }
-    const priceInCents = Math.round(priceFloat * 100);
 
     startTransition(async () => {
       const result = await addIngredientSupplier({
@@ -214,12 +213,11 @@ export function IngredientSuppliersPanel({
       toast("Unit required");
       return;
     }
-    const totalFloat = parseFloat(purchaseTotal);
-    if (!Number.isFinite(totalFloat) || totalFloat < 0) {
+    const totalPriceInCents = parseRMToCents(purchaseTotal);
+    if (totalPriceInCents === null || totalPriceInCents < 0) {
       toast("Invalid total");
       return;
     }
-    const totalPriceInCents = Math.round(totalFloat * 100);
     const link = purchaseFor;
 
     startTransition(async () => {

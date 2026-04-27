@@ -379,17 +379,29 @@ export async function addIngredientSupplier(
       return { success: false, error: "Supplier already added" };
     }
 
-    const link = await prisma.ingredientSupplier.create({
-      data: {
-        ingredientId: parsed.data.ingredientId,
-        supplierId: parsed.data.supplierId,
-        cafeId,
-        priceInCents: parsed.data.priceInCents,
-        unit: parsed.data.unit,
-      },
-    });
-
-    return { success: true, data: { id: link.id } };
+    try {
+      const link = await prisma.ingredientSupplier.create({
+        data: {
+          ingredientId: parsed.data.ingredientId,
+          supplierId: parsed.data.supplierId,
+          cafeId,
+          priceInCents: parsed.data.priceInCents,
+          unit: parsed.data.unit,
+        },
+      });
+      return { success: true, data: { id: link.id } };
+    } catch (createError) {
+      // P2002 = unique constraint violation; means a concurrent insert raced past the pre-check.
+      if (
+        typeof createError === "object" &&
+        createError !== null &&
+        "code" in createError &&
+        (createError as { code: unknown }).code === "P2002"
+      ) {
+        return { success: false, error: "Supplier already added" };
+      }
+      throw createError;
+    }
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return { success: false, error: "Unauthorized" };
@@ -459,25 +471,30 @@ export async function removeIngredientSupplier(
       return { success: false, error: parsed.error.issues[0].message };
     }
 
-    const link = await prisma.ingredientSupplier.findFirst({
-      where: { id: parsed.data.id, cafeId },
-      select: { id: true, _count: { select: { purchases: true } } },
-    });
-    if (!link) {
-      return { success: false, error: "Supplier not found" };
+    // Wrap check + delete in a serializable transaction so a concurrent
+    // purchase insert can't slip past the count guard and get cascaded away.
+    const txResult = await prisma.$transaction(
+      async (tx) => {
+        const link = await tx.ingredientSupplier.findFirst({
+          where: { id: parsed.data.id, cafeId },
+          select: { id: true, _count: { select: { purchases: true } } },
+        });
+        if (!link) return { ok: false as const, error: "Supplier not found" };
+        if (link._count.purchases > 0) {
+          return {
+            ok: false as const,
+            error: "Has purchase history; archive supplier instead",
+          };
+        }
+        await tx.ingredientSupplier.delete({ where: { id: parsed.data.id } });
+        return { ok: true as const };
+      },
+      { isolationLevel: "Serializable" }
+    );
+
+    if (!txResult.ok) {
+      return { success: false, error: txResult.error };
     }
-
-    if (link._count.purchases > 0) {
-      return {
-        success: false,
-        error: "Has purchase history; archive supplier instead",
-      };
-    }
-
-    await prisma.ingredientSupplier.delete({
-      where: { id: parsed.data.id },
-    });
-
     return { success: true, data: undefined };
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

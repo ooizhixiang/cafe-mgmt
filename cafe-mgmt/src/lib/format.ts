@@ -3,6 +3,23 @@ export function formatCents(cents: number): string {
   return `$${dollars.toFixed(2)}`;
 }
 
+// Parse a user-typed RM amount (string or number) to integer cents.
+// Returns null on invalid input. Avoids float drift around 1.005-style values.
+export function parseRMToCents(input: string | number): number | null {
+  const raw = typeof input === "string" ? input.trim() : String(input);
+  if (raw === "") return null;
+  if (!/^-?\d*\.?\d*$/.test(raw)) return null;
+  const [whole, frac = ""] = raw.split(".");
+  const sign = whole.startsWith("-") ? -1 : 1;
+  const wholeDigits = whole.replace("-", "");
+  if (wholeDigits === "" && frac === "") return null;
+  const fracPadded = (frac + "00").slice(0, 2);
+  const wholeNum = wholeDigits === "" ? 0 : parseInt(wholeDigits, 10);
+  const fracNum = fracPadded === "" ? 0 : parseInt(fracPadded, 10);
+  if (Number.isNaN(wholeNum) || Number.isNaN(fracNum)) return null;
+  return sign * (wholeNum * 100 + fracNum);
+}
+
 export function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-US", {
     hour: "numeric",

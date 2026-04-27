@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { PackageCheck, PhoneOff, PhoneForwarded } from "lucide-react";
+import { parseRMToCents } from "@/lib/format";
 
 export interface IngredientSupplierChoice {
   id: string;
@@ -90,8 +91,8 @@ export function CallOutcomePrompt({
       setError("Unit required");
       return;
     }
-    const totalNum = parseFloat(total);
-    if (!Number.isFinite(totalNum) || totalNum < 0) {
+    const totalPriceInCents = parseRMToCents(total);
+    if (totalPriceInCents === null || totalPriceInCents < 0) {
       setError("Enter a valid total");
       return;
     }
@@ -100,7 +101,7 @@ export function CallOutcomePrompt({
       ingredientSupplierId: choiceId,
       quantity: qtyNum,
       unit: unitTrim,
-      totalPriceInCents: Math.round(totalNum * 100),
+      totalPriceInCents,
     });
   }
 

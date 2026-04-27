@@ -2,7 +2,7 @@
 title: 'Multi-supplier pricing per ingredient + purchase history'
 type: 'feature'
 created: '2026-04-27'
-status: 'in-progress'
+status: 'done'
 baseline_commit: '6e847219d8fc77a0e972bb92abef4af5f42e98c3'
 context:
   - '{project-root}/cafe-mgmt/prisma/schema.prisma'
@@ -94,6 +94,19 @@ context:
 
 ## Spec Change Log
 
+### Review iteration 1 — 2026-04-27 — patches applied (no spec changes)
+
+Three-reviewer pass (Blind Hunter, Edge Case Hunter, Acceptance Auditor) found no `bad_spec` or `intent_gap` items. The spec's `<frozen-after-approval>` block held; all classified findings were `patch` (auto-fixed in this loop) or `defer` (appended to `deferred-work.md`).
+
+**Patches applied:**
+
+- `src/actions/supplier.actions.ts` — `logCallOutcome` upgraded from `requireAuth()` to `requireRole("MANAGER")`. Closes a privilege-escalation hole that would have let a staff user create `IngredientPurchase` rows via the ORDERED sub-form. Spec's Always rule "Server-side `requireRole(\"MANAGER\")` on every write action" is now enforced for this path.
+- `src/lib/format.ts` (new helper `parseRMToCents`) + 4 callsites in `src/components/ingredients/ingredient-suppliers-panel.tsx` and `src/components/operations/call-outcome-prompt.tsx` — replaced `Math.round(parseFloat(x) * 100)` (float-unsafe; e.g. `1.005 * 100 = 100.499…` → 100 cents instead of 101) with a string-based digit-split parser that returns integer cents directly. Money correctness preserved across all decimal inputs.
+- `src/actions/setup.actions.ts` — `removeIngredientSupplier` now wraps the count check + delete in a `Serializable` `prisma.$transaction` so a concurrent `IngredientPurchase` insert can't slip past the `_count.purchases > 0` guard and get cascade-destroyed. Spec's invariant "Don't auto-update IngredientSupplier.priceInCents from purchase entries" wasn't directly relevant; the patch protects the related I/O Matrix scenario "Manager removes supplier from ingredient … If purchase history exists for that link → block delete".
+- `src/actions/setup.actions.ts` — `addIngredientSupplier` now catches Prisma `P2002` (unique constraint violation) thrown when a concurrent insert races past the duplicate pre-check, returning the spec's exact error string `"Supplier already added"` instead of the generic "Something went wrong" toast.
+
+**KEEP instructions** (preserve in any future re-derivation): the `<frozen-after-approval>` boundary held — keep it as-is. The implementation's separation of `Ingredient.costPerUnitInCents` from per-supplier `priceInCents` (independent valuation cost vs. list price) was reaffirmed by Acceptance Auditor and must survive future iterations.
+
 ## Design Notes
 
 **Schema sketch (load-bearing):**
@@ -163,3 +176,79 @@ Then drop `Ingredient.supplierId`.
 - Run dev server, log in as manager, expand an ingredient on `/settings/ingredients`, click "Show all suppliers", add 2 suppliers with different prices, edit one inline, attempt removal of one with no history (succeeds) and one with history (blocked).
 - Log in as staff, open `/inventory`, expand same ingredient, confirm read-only view of both tables.
 - As manager, tap a supplier's call button on `/operations` (or wherever supplier-list renders), choose ORDERED, fill the sub-form, submit. Verify one new history row appears for that ingredient.
+
+## Suggested Review Order
+
+**Schema & migration (the foundation)**
+
+- New many-to-many join + purchase log; ingredient.supplierId dropped.
+  [`schema.prisma:400`](../../cafe-mgmt/prisma/schema.prisma#L400)
+
+- Hand-ordered: create tables → backfill from old supplierId → drop column.
+  [`migration.sql:83`](../../cafe-mgmt/prisma/migrations/20260427020922_multi_supplier_ingredient/migration.sql#L83)
+
+- See `Ingredient` model after change (no more `supplierId`, kept `costPerUnitInCents` for valuation).
+  [`schema.prisma:153`](../../cafe-mgmt/prisma/schema.prisma#L153)
+
+**Manager-only writes (incl. review-loop fix)**
+
+- ORDERED-with-purchase path; review patch upgraded `requireAuth()` → `requireRole("MANAGER")`.
+  [`supplier.actions.ts:196`](../../cafe-mgmt/src/actions/supplier.actions.ts#L196)
+
+- Add link with duplicate pre-check + P2002 race-fallback (review patch).
+  [`setup.actions.ts:339`](../../cafe-mgmt/src/actions/setup.actions.ts#L339)
+
+- Remove link blocked when purchases exist; serializable transaction (review patch).
+  [`setup.actions.ts:462`](../../cafe-mgmt/src/actions/setup.actions.ts#L462)
+
+- Manual purchase log entry point.
+  [`inventory.actions.ts:401`](../../cafe-mgmt/src/actions/inventory.actions.ts#L401)
+
+- Edit price/unit on an existing link.
+  [`setup.actions.ts:419`](../../cafe-mgmt/src/actions/setup.actions.ts#L419)
+
+**Money correctness (review patch)**
+
+- New helper avoids `parseFloat * 100` float drift on RM amounts like `1.005`.
+  [`format.ts:8`](../../cafe-mgmt/src/lib/format.ts#L8)
+
+- Three callsites in the panel; one in the call-outcome sub-form.
+  [`ingredient-suppliers-panel.tsx:58`](../../cafe-mgmt/src/components/ingredients/ingredient-suppliers-panel.tsx#L58)
+
+  [`call-outcome-prompt.tsx:72`](../../cafe-mgmt/src/components/operations/call-outcome-prompt.tsx#L72)
+
+**UI surfaces (the disclosure + sub-form)**
+
+- Shared component (suppliers table sorted by price; history sorted by date desc); `mode` gates manager controls.
+  [`ingredient-suppliers-panel.tsx:58`](../../cafe-mgmt/src/components/ingredients/ingredient-suppliers-panel.tsx#L58)
+
+- "Show all suppliers" toggle on the manager settings page.
+  [`ingredient-config.tsx:415`](../../cafe-mgmt/src/components/settings/ingredient-config.tsx#L415)
+
+- "Show all suppliers" toggle on `/inventory`; `mode` flips by `userRole`.
+  [`inventory-list.tsx:598`](../../cafe-mgmt/src/components/inventory/inventory-list.tsx#L598)
+
+- ORDERED reveals the inline sub-form; Save vs Skip preserves the one-click ORDERED path.
+  [`call-outcome-prompt.tsx:39`](../../cafe-mgmt/src/components/operations/call-outcome-prompt.tsx#L39)
+
+**Page-level data fetching**
+
+- RSC includes `ingredientSuppliers` + history; passes `userRole`.
+  [`inventory/page.tsx:1`](../../cafe-mgmt/src/app/(app)/inventory/page.tsx#L1)
+
+- Same shape on the settings page (manager-only context).
+  [`settings/ingredients/page.tsx:1`](../../cafe-mgmt/src/app/(app)/settings/ingredients/page.tsx#L1)
+
+- Builds `ingredientChoices` per supplier for the ORDERED sub-form.
+  [`suppliers/page.tsx:1`](../../cafe-mgmt/src/app/(app)/suppliers/page.tsx#L1)
+
+**Tests (peripherals)**
+
+- Schema cases for the three IngredientSupplier actions.
+  [`setup.actions.test.ts:1`](../../cafe-mgmt/src/actions/setup.actions.test.ts#L1)
+
+- `createIngredientPurchase` schema + the dropped-`supplierId` strip behavior.
+  [`inventory.actions.test.ts:1`](../../cafe-mgmt/src/actions/inventory.actions.test.ts#L1)
+
+- `logCallOutcome` purchase variants.
+  [`supplier.actions.test.ts:1`](../../cafe-mgmt/src/actions/supplier.actions.test.ts#L1)
