@@ -6,10 +6,9 @@ import { getCafeNow } from "@/lib/format";
  */
 export async function checkThresholds(
   cafeId: string,
-  timezone: string,
   ingredientId?: string
 ) {
-  const today = getCafeNow(timezone);
+  const today = getCafeNow();
   today.setHours(0, 0, 0, 0);
 
   const ingredients = await prisma.ingredient.findMany({

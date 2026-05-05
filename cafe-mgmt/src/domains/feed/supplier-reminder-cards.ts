@@ -3,10 +3,9 @@ import { getCafeNow } from "@/lib/format";
 import type { FeedCard } from "@/types/feed";
 
 export async function getSupplierReminderCards(
-  cafeId: string,
-  timezone: string
+  cafeId: string
 ): Promise<FeedCard[]> {
-  const now = getCafeNow(timezone);
+  const now = getCafeNow();
 
   const suppliers = await prisma.supplier.findMany({
     where: { cafeId },

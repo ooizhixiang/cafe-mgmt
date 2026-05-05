@@ -248,19 +248,7 @@ export async function getDailyChecklists(): Promise<
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-
-    if (!cafe) {
-      return { success: false, error: "Cafe not found" };
-    }
-
-    const dailyChecklists = await getOrCreateDailyChecklists(
-      cafeId,
-      cafe.timezone
-    );
+    const dailyChecklists = await getOrCreateDailyChecklists(cafeId);
 
     const data = dailyChecklists.map((dc) => ({
       id: dc.id,
@@ -409,18 +397,9 @@ export async function getMyActivity(): Promise<
   try {
     const session = await requireAuth();
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: session.user.cafeId },
-      select: { timezone: true },
-    });
-
-    if (!cafe) {
-      return { success: false, error: "Cafe not found" };
-    }
-
     // Get today's start in cafe timezone
     const { getCafeNow } = await import("@/lib/format");
-    const cafeNow = getCafeNow(cafe.timezone);
+    const cafeNow = getCafeNow();
     const todayStart = new Date(
       cafeNow.getFullYear(),
       cafeNow.getMonth(),

@@ -94,9 +94,6 @@ describe("logWastage — Patch 2 (NO_LOTS_RECORDED)", () => {
       costPerUnitInCents: null,
       manualCostOverride: false,
     } as never);
-    vi.mocked(prisma.cafe.findUnique).mockResolvedValue({
-      timezone: "UTC",
-    } as never);
     vi.mocked(prisma.inventoryCount.findUnique).mockResolvedValue(null);
 
     const wastageCreate = vi.fn();
@@ -132,9 +129,6 @@ describe("logWastage — Patch 2 (NO_LOTS_RECORDED)", () => {
       cafeId: "cafe-1",
       costPerUnitInCents: null,
       manualCostOverride: false,
-    } as never);
-    vi.mocked(prisma.cafe.findUnique).mockResolvedValue({
-      timezone: "UTC",
     } as never);
     vi.mocked(prisma.inventoryCount.findUnique).mockResolvedValue(null);
 
@@ -178,9 +172,6 @@ describe("logWastage — Patch 2 (NO_LOTS_RECORDED)", () => {
       cafeId: "cafe-1",
       costPerUnitInCents: null,
       manualCostOverride: false,
-    } as never);
-    vi.mocked(prisma.cafe.findUnique).mockResolvedValue({
-      timezone: "UTC",
     } as never);
     vi.mocked(prisma.inventoryCount.findUnique).mockResolvedValue(null);
 

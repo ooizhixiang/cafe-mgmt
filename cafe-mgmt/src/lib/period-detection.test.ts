@@ -85,7 +85,7 @@ describe("getCurrentPeriod", () => {
 
 describe("getNextPeriod", () => {
   it("returns a PeriodInfo or null", () => {
-    const result = getNextPeriod("UTC", DEFAULT_BOUNDARIES);
+    const result = getNextPeriod(DEFAULT_BOUNDARIES);
     // Either null or a valid period
     if (result) {
       expect(result.period).toBeDefined();

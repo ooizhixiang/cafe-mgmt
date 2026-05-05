@@ -66,10 +66,6 @@ describe("submitDailyReport — idempotency (Patch 1)", () => {
       },
     ] as never);
 
-    vi.mocked(prisma.cafe.findUnique).mockResolvedValue({
-      timezone: "UTC",
-    } as never);
-
     // No ingredient meta calls expected because we never reach inventory step.
     vi.mocked(prisma.ingredient.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.ingredientPurchase.findMany).mockResolvedValue([] as never);

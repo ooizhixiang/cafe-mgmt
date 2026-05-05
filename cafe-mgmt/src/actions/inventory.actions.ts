@@ -157,13 +157,7 @@ export async function getInventoryCounts(): Promise<
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     const yesterday = new Date(today);
@@ -244,13 +238,7 @@ export async function saveInventoryCount(
       return { success: false, error: "Ingredient not found" };
     }
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     // Check for optimistic concurrency conflict
@@ -301,7 +289,7 @@ export async function saveInventoryCount(
     });
 
     // Check thresholds after save
-    await checkThresholds(cafeId, cafe.timezone, ingredientId);
+    await checkThresholds(cafeId, ingredientId);
 
     return {
       success: true,
@@ -327,13 +315,7 @@ export async function bulkConfirmUnchanged(
       return { success: false, error: "Invalid input" };
     }
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     const yesterday = new Date(today);
@@ -447,15 +429,7 @@ export async function createIngredientPurchase(
       return { success: false, error: "Ingredient supplier not found" };
     }
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) {
-      return { success: false, error: "Cafe not found" };
-    }
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     const purchase = await prisma.$transaction(async (tx) => {
@@ -553,17 +527,10 @@ export async function bulkCreateIngredientPurchases(
       return { success: false, error: "Supplier not found" };
     }
 
-    // Resolve "today" in the cafe's timezone (date-only) for the InventoryCount
-    // upsert. Done outside the transaction since clock reads don't need to be
+    // Resolve "today" (date-only, KL wall clock) for the InventoryCount upsert.
+    // Done outside the transaction since clock reads don't need to be
     // transactional and matches the existing convention elsewhere in this file.
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) {
-      return { success: false, error: "Cafe not found" };
-    }
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     const ingredientIds = lines.map((l) => l.ingredientId);

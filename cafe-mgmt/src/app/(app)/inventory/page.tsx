@@ -10,16 +10,7 @@ export default async function InventoryPage() {
   const cafeId = session.user.cafeId;
   const userRole = session.user.role;
 
-  const cafe = await prisma.cafe.findUnique({
-    where: { id: cafeId },
-    select: { timezone: true },
-  });
-
-  if (!cafe) {
-    return <div className="p-[var(--space-4)]">Cafe not found</div>;
-  }
-
-  const today = getCafeNow(cafe.timezone);
+  const today = getCafeNow();
   today.setHours(0, 0, 0, 0);
 
   const yesterday = new Date(today);

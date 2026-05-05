@@ -19,12 +19,7 @@ export default async function WastageCompPage({
   const params = await searchParams;
   const tab = params.tab ?? "wastage";
 
-  const cafe = await prisma.cafe.findUnique({
-    where: { id: cafeId },
-    select: { timezone: true },
-  });
-
-  const today = getCafeNow(cafe?.timezone ?? "America/New_York");
+  const today = getCafeNow();
   today.setHours(0, 0, 0, 0);
 
   const [ingredients, counts] = await Promise.all([

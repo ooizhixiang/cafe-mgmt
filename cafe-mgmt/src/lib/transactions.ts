@@ -8,10 +8,9 @@ import { getCafeNow } from "@/lib/format";
 export async function deductInventory(
   ingredientId: string,
   quantity: number,
-  cafeId: string,
-  timezone: string
+  cafeId: string
 ) {
-  const today = getCafeNow(timezone);
+  const today = getCafeNow();
   today.setHours(0, 0, 0, 0);
 
   const currentCount = await prisma.inventoryCount.findUnique({
@@ -45,10 +44,9 @@ export async function deductInventory(
 export async function restoreInventory(
   ingredientId: string,
   quantity: number,
-  cafeId: string,
-  timezone: string
+  cafeId: string
 ) {
-  const today = getCafeNow(timezone);
+  const today = getCafeNow();
   today.setHours(0, 0, 0, 0);
 
   const currentCount = await prisma.inventoryCount.findUnique({

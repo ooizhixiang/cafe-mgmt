@@ -77,10 +77,17 @@ export function formatDateTime(date: Date): string {
   });
 }
 
-export function getCafeNow(timezone: string): Date {
+/**
+ * The single source of truth for the app's operating timezone. The product
+ * targets Malaysia only, so all period boundaries, daily-report dates, FIFO
+ * timestamps, and "today" calculations resolve against this constant.
+ */
+export const CAFE_TIMEZONE = "Asia/Kuala_Lumpur";
+
+export function getCafeNow(): Date {
   const now = new Date();
   const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
+    timeZone: CAFE_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

@@ -5,7 +5,6 @@ import { prisma } from "@/lib/db";
 import { LogoutButton } from "./logout-button";
 import { StaffList } from "@/components/staff/staff-list";
 import { InviteSection } from "@/components/staff/invite-section";
-import { CafeSettings } from "@/components/settings/cafe-settings";
 import { TimeBoundaries } from "@/components/settings/time-boundaries";
 import { CompBudgetSettings } from "@/components/settings/comp-budget";
 import { DarkModeToggle } from "@/components/settings/dark-mode-toggle";
@@ -50,7 +49,6 @@ export default async function SettingsPage() {
       ? prisma.cafe.findUnique({
           where: { id: cafeId },
           select: {
-            timezone: true,
             openingStart: true,
             openingEnd: true,
             midDayStart: true,
@@ -80,28 +78,21 @@ export default async function SettingsPage() {
       <p className="text-meta text-[var(--text-secondary)] mb-[var(--space-6)]">Manage your cafe</p>
 
       <div className="space-y-[var(--space-6)] lg:max-w-[640px]">
-        {/* Section 1: Cafe Settings (Manager only) */}
+        {/* Section 1: Checklist Time Boundaries (Manager only) */}
         {isManager && cafe && (
           <section>
-            <h2 className="text-value mb-[var(--space-3)]">Cafe Settings</h2>
-            <div className="rounded-lg p-[var(--space-4)] space-y-[var(--space-5)]" style={{ boxShadow: "var(--shadow-card)" }}>
-              <CafeSettings initialTimezone={cafe.timezone} />
-
-              <div className="border-t border-[var(--border-default)] pt-[var(--space-4)]">
-                <p className="text-meta font-medium text-[var(--text-primary)] mb-[var(--space-3)]">
-                  Checklist Time Boundaries
-                </p>
-                <TimeBoundaries
-                  initialValues={{
-                    openingStart: cafe.openingStart,
-                    openingEnd: cafe.openingEnd,
-                    midDayStart: cafe.midDayStart,
-                    midDayEnd: cafe.midDayEnd,
-                    closingStart: cafe.closingStart,
-                    closingEnd: cafe.closingEnd,
-                  }}
-                />
-              </div>
+            <h2 className="text-value mb-[var(--space-3)]">Checklist Time Boundaries</h2>
+            <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
+              <TimeBoundaries
+                initialValues={{
+                  openingStart: cafe.openingStart,
+                  openingEnd: cafe.openingEnd,
+                  midDayStart: cafe.midDayStart,
+                  midDayEnd: cafe.midDayEnd,
+                  closingStart: cafe.closingStart,
+                  closingEnd: cafe.closingEnd,
+                }}
+              />
             </div>
           </section>
         )}

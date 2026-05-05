@@ -21,7 +21,6 @@ enum Period {
 model Cafe {
   id        String   @id @default(cuid())
   name      String   @default("My Cafe")
-  timezone  String   @default("America/New_York")
 
   // Checklist time boundaries (HH:mm format, null = use defaults)
   openingStart String?

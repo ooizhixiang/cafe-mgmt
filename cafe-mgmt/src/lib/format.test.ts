@@ -3,6 +3,7 @@ import {
   DEFAULT_TIME_BOUNDARIES,
   getDefaultTimeBoundaries,
   getCafeNow,
+  CAFE_TIMEZONE,
   formatCents,
   formatTime,
   parseRMToCentsPrecise,
@@ -44,25 +45,43 @@ describe("getDefaultTimeBoundaries", () => {
   });
 });
 
+describe("CAFE_TIMEZONE", () => {
+  it("is locked to Asia/Kuala_Lumpur", () => {
+    expect(CAFE_TIMEZONE).toBe("Asia/Kuala_Lumpur");
+  });
+});
+
 describe("getCafeNow", () => {
   it("returns a valid Date object", () => {
-    const result = getCafeNow("America/New_York");
+    const result = getCafeNow();
     expect(result).toBeInstanceOf(Date);
     expect(result.getTime()).not.toBeNaN();
   });
 
-  it("returns different times for different timezones", () => {
-    const ny = getCafeNow("America/New_York");
-    const la = getCafeNow("America/Los_Angeles");
-    // LA is 3 hours behind NY
-    const diffHours = (ny.getTime() - la.getTime()) / (1000 * 60 * 60);
-    expect(Math.abs(diffHours - 3)).toBeLessThan(0.1);
-  });
-
-  it("works with UTC timezone", () => {
-    const utc = getCafeNow("UTC");
-    expect(utc).toBeInstanceOf(Date);
-    expect(utc.getTime()).not.toBeNaN();
+  it("returns wall-clock time in Asia/Kuala_Lumpur (UTC+8)", () => {
+    const cafe = getCafeNow();
+    // Independently compute the KL wall clock from the same `now`. We compare
+    // the two within a 2s tolerance to absorb the jitter between the two
+    // `Date.now()` reads (cafe vs. expected) without coupling to the test
+    // runner's wall clock.
+    const now = new Date();
+    const klFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kuala_Lumpur",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const parts = klFormatter.formatToParts(now);
+    const get = (type: string) =>
+      parts.find((p) => p.type === type)?.value ?? "0";
+    const expected = new Date(
+      `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`
+    );
+    expect(Math.abs(cafe.getTime() - expected.getTime())).toBeLessThan(2000);
   });
 });
 

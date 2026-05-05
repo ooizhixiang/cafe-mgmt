@@ -7,11 +7,8 @@ import type { Period } from "@/generated/prisma/enums";
  * On-demand generation — no cron needed.
  * Uses unique constraint (cafeId, date, period) for concurrent safety.
  */
-export async function getOrCreateDailyChecklists(
-  cafeId: string,
-  timezone: string
-) {
-  const cafeNow = getCafeNow(timezone);
+export async function getOrCreateDailyChecklists(cafeId: string) {
+  const cafeNow = getCafeNow();
   // Normalize to date only (midnight)
   const today = new Date(
     cafeNow.getFullYear(),
@@ -105,16 +102,4 @@ export async function getOrCreateDailyChecklists(
     };
     return order[a.period] - order[b.period];
   });
-}
-
-/**
- * Get today's date in cafe timezone as a Date object (midnight).
- */
-export function getCafeToday(timezone: string): Date {
-  const cafeNow = getCafeNow(timezone);
-  return new Date(
-    cafeNow.getFullYear(),
-    cafeNow.getMonth(),
-    cafeNow.getDate()
-  );
 }

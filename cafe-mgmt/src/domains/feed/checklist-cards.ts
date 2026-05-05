@@ -1,4 +1,3 @@
-import { prisma } from "@/lib/db";
 import { getOrCreateDailyChecklists } from "@/lib/checklist";
 import { getCurrentPeriod, getAllPeriods, type TimeBoundaries } from "@/lib/period-detection";
 import type { FeedCard, ChecklistCardData } from "@/types/feed";
@@ -7,21 +6,13 @@ import type { Role, Period } from "@/generated/prisma/enums";
 export async function getChecklistCards(
   cafeId: string,
   role: Role,
-  timezone: string,
   timeBoundaries: TimeBoundaries
 ): Promise<FeedCard[]> {
-  const cafe = await prisma.cafe.findUnique({
-    where: { id: cafeId },
-    select: { timezone: true },
-  });
-
-  if (!cafe) return [];
-
-  const dailyChecklists = await getOrCreateDailyChecklists(cafeId, timezone);
+  const dailyChecklists = await getOrCreateDailyChecklists(cafeId);
 
   if (dailyChecklists.length === 0) return [];
 
-  const currentPeriod = getCurrentPeriod(timezone, timeBoundaries);
+  const currentPeriod = getCurrentPeriod(timeBoundaries);
   const allPeriods = getAllPeriods(timeBoundaries);
 
   const cards: FeedCard[] = [];

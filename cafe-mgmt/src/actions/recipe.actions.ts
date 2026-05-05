@@ -499,13 +499,7 @@ export async function getRecipe(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     const recipe = await prisma.recipe.findFirst({

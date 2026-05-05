@@ -65,11 +65,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(requireAuth).mockResolvedValue(mockSession as never);
   vi.mocked(requireRole).mockResolvedValue(mockManagerSession as never);
-  // Default cafe lookup (timezone) — bulk purchase + auto-count needs it. Tests
-  // that exercise the cafe-not-found path can override per-test.
-  vi.mocked(prisma.cafe.findUnique).mockResolvedValue({
-    timezone: "UTC",
-  } as never);
+  // Cafe lookup no longer needed for timezone (locked to Asia/Kuala_Lumpur via
+  // CAFE_TIMEZONE constant). Default to a present cafe so any remaining
+  // findUnique calls in actions don't return null. Tests that need a specific
+  // cafe shape override per-test.
+  vi.mocked(prisma.cafe.findUnique).mockResolvedValue({} as never);
 });
 
 // Test Zod schemas used in inventory actions

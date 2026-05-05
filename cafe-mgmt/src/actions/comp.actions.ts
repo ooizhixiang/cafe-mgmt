@@ -41,11 +41,11 @@ function getWeekStart(now: Date, resetDay: number): Date {
   return d;
 }
 
-async function calculateBudgetRemaining(cafeId: string, timezone: string) {
+async function calculateBudgetRemaining(cafeId: string) {
   const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
   if (!budget) return null;
 
-  const now = getCafeNow(timezone);
+  const now = getCafeNow();
   const weekStart = getWeekStart(now, budget.resetDay);
 
   const result = await prisma.compEntry.aggregate({
@@ -94,12 +94,6 @@ export async function logComp(
     if (!ingredient) {
       return { success: false, error: "Ingredient not found" };
     }
-
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
 
     const dollarValueInCents = calculateDollarValue(ingredient, quantity);
 
@@ -175,7 +169,7 @@ export async function logComp(
       throw e;
     }
 
-    const budgetInfo = await calculateBudgetRemaining(cafeId, cafe.timezone);
+    const budgetInfo = await calculateBudgetRemaining(cafeId);
 
     return {
       success: true,
@@ -321,13 +315,7 @@ export async function getCompBudgetRemaining(): Promise<
 > {
   try {
     const session = await requireAuth();
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: session.user.cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const info = await calculateBudgetRemaining(session.user.cafeId, cafe.timezone);
+    const info = await calculateBudgetRemaining(session.user.cafeId);
     if (!info) return { success: true, data: null };
 
     return {

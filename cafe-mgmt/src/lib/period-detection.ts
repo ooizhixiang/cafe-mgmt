@@ -65,10 +65,9 @@ export function getAllPeriods(tb: TimeBoundaries): PeriodInfo[] {
 }
 
 export function getCurrentPeriod(
-  timezone: string,
   tb: TimeBoundaries
 ): PeriodInfo | null {
-  const now = getCafeNow(timezone);
+  const now = getCafeNow();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const periods = getAllPeriods(tb);
 
@@ -84,10 +83,9 @@ export function getCurrentPeriod(
 }
 
 export function getNextPeriod(
-  timezone: string,
   tb: TimeBoundaries
 ): PeriodInfo | null {
-  const now = getCafeNow(timezone);
+  const now = getCafeNow();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const periods = getAllPeriods(tb);
 

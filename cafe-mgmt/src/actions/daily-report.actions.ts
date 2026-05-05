@@ -265,13 +265,7 @@ export async function submitDailyReport(
       }
     }
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const today = getCafeNow(cafe.timezone);
+    const today = getCafeNow();
     today.setHours(0, 0, 0, 0);
 
     // Derived per-unit cost per ingredient — drives InventoryCount.dollarValueInCents
@@ -563,7 +557,7 @@ export async function submitDailyReport(
 
     // Check thresholds after deductions
     for (const [ingredientId] of deductionMap) {
-      await checkThresholds(cafeId, cafe.timezone, ingredientId).catch(() => {});
+      await checkThresholds(cafeId, ingredientId).catch(() => {});
     }
 
     return { success: true, data: { deductions } };
@@ -598,13 +592,7 @@ export async function getSalesAnalysis(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const now = getCafeNow(cafe.timezone);
+    const now = getCafeNow();
     now.setHours(0, 0, 0, 0);
 
     const startDate = new Date(now);
@@ -731,13 +719,7 @@ export async function getRevenueAnalysis(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
-    const now = getCafeNow(cafe.timezone);
+    const now = getCafeNow();
     now.setHours(0, 0, 0, 0);
 
     const startDate = new Date(now);

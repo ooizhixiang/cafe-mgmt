@@ -12,13 +12,12 @@ function getWeekStart(date: Date, resetDay: number): Date {
 }
 
 export async function getCompWarningCards(
-  cafeId: string,
-  timezone: string
+  cafeId: string
 ): Promise<FeedCard[]> {
   const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
   if (!budget) return [];
 
-  const now = getCafeNow(timezone);
+  const now = getCafeNow();
   const weekStart = getWeekStart(now, budget.resetDay);
 
   const result = await prisma.compEntry.aggregate({

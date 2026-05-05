@@ -26,16 +26,10 @@ export async function getWeeklyTotals(): Promise<ActionResult<WeekData[]>> {
     const session = await requireRole("MANAGER");
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
     const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
     const resetDay = budget?.resetDay ?? 1; // Default Monday
 
-    const now = getCafeNow(cafe.timezone);
+    const now = getCafeNow();
     const weeks: WeekData[] = [];
 
     for (let i = 0; i < 5; i++) {
@@ -93,16 +87,10 @@ export async function getCurrentWeekTotals(): Promise<
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const cafe = await prisma.cafe.findUnique({
-      where: { id: cafeId },
-      select: { timezone: true },
-    });
-    if (!cafe) return { success: false, error: "Cafe not found" };
-
     const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
     const resetDay = budget?.resetDay ?? 1;
 
-    const now = getCafeNow(cafe.timezone);
+    const now = getCafeNow();
     const weekStart = getWeekStart(now, resetDay);
 
     const [wastageResult, compResult] = await Promise.all([

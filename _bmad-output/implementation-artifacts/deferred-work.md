@@ -424,3 +424,19 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **No editor-component tests for the new `SubRecipesPanel` / `YieldEditor` UI.** No existing test file for `recipe-editor.tsx` to extend; the new sub-components are well-typed wrappers around tested actions, but there are no jsdom assertions for: yield set/clear UI flow, composite picker rendering when no other yield-having recipes exist, "📋 {name}" composite row label, picker filtering. Add when next touching the editor.
   - Severity: low (server actions tested + manual UI verified; no regression risk for raw-only recipes)
+
+## From spec-lock-timezone-to-malaysia (review iteration 1)
+
+- **`getCafeNow()` assumes the Node process runs in UTC.** Constructs a `Date` from a TZ-naive ISO-like string built via `Intl.DateTimeFormat` with `timeZone: "Asia/Kuala_Lumpur"`. `new Date("YYYY-MM-DDTHH:mm:ss")` is parsed in the **server's** local TZ. Works on UTC hosts (typical) and on KL hosts (incidentally), breaks if anyone deploys to a non-UTC, non-KL region. Pre-existing pattern, not introduced by this story.
+  - Severity: medium (latent — only triggers on misconfigured deploy)
+  - Fix: rebuild via `Date.UTC(...) - 8*3600*1000` to produce a true KL instant, or use a TZ-aware library (e.g. `@date-fns/tz`).
+
+- **`getCafeSettings` server action is a dead export.** Zero callers anywhere in `src/`. Pre-dates this story; only narrowed (removed `timezone` from its return shape) here. Safe to delete next time this file is touched.
+  - Severity: low (cosmetic dead code)
+
+- **Two `period-detection.test.ts` blocks pass vacuously.** `it("returns OPENING during opening hours")` and `it("returns null outside all periods")` only call `vi.doMock` and never invoke `getCurrentPeriod` or `expect()`. Pre-existing — surfaced because the diff touched this file. The behavioural coverage of `getCurrentPeriod` is currently silent.
+  - Severity: medium (false-confidence test)
+  - Fix: add the missing `expect()` calls; assert the period boundaries actually drive the return.
+
+- **Stale lazy `await import("@/lib/format")` in `checklist.actions.ts:401`.** Originally lazy to avoid a circular dep when timezone needed a cafe lookup. Now that `getCafeNow()` is arg-less and the cafe lookup is gone, the `getMyActivity` path can use a top-level static import.
+  - Severity: low (cosmetic)

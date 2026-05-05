@@ -19,7 +19,6 @@ export async function getFeedData(
   const cafe = await prisma.cafe.findUnique({
     where: { id: cafeId },
     select: {
-      timezone: true,
       openingStart: true,
       openingEnd: true,
       midDayStart: true,
@@ -44,13 +43,13 @@ export async function getFeedData(
 
   // Per-domain error isolation via Promise.allSettled
   const results = await Promise.allSettled([
-    getChecklistCards(cafeId, role, cafe.timezone, timeBoundaries),
+    getChecklistCards(cafeId, role, timeBoundaries),
     role === "MANAGER"
       ? getOnboardingFeedCards(cafeId)
       : Promise.resolve([]),
     getAlertCards(cafeId),
-    getCompWarningCards(cafeId, cafe.timezone),
-    getSupplierReminderCards(cafeId, cafe.timezone),
+    getCompWarningCards(cafeId),
+    getSupplierReminderCards(cafeId),
     getSinceLastVisitCard(cafeId, userId),
     getMarginAlertCards(cafeId),
   ]);
@@ -71,7 +70,7 @@ export async function getFeedData(
   });
 
   // Build summary
-  const summary = buildSummary(allCards, cafe.timezone, timeBoundaries);
+  const summary = buildSummary(allCards, timeBoundaries);
 
   // Build badges
   const badges = buildBadges(allCards);
@@ -81,11 +80,10 @@ export async function getFeedData(
 
 function buildSummary(
   cards: FeedCard[],
-  timezone: string,
   timeBoundaries: TimeBoundaries
 ): FeedSummary {
   // Find the current period's checklist card for summary
-  const currentPeriod = getCurrentPeriod(timezone, timeBoundaries);
+  const currentPeriod = getCurrentPeriod(timeBoundaries);
 
   if (currentPeriod) {
     const checklistCard = cards.find(
