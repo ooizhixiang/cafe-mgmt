@@ -5,6 +5,8 @@ import { logWastage } from "@/actions/wastage.actions";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
 import { useUndoToast } from "@/components/providers/undo-toast-provider";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { parseOverDeductionError } from "@/lib/lot-consume";
 import { Droplets, CalendarClock, CircleX } from "lucide-react";
 
 interface Ingredient {
@@ -27,6 +29,10 @@ export function WastageLogger({ ingredients, stockMap: initialStockMap = {} }: {
   const [search, setSearch] = useState("");
   const [isPending, startTransition] = useTransition();
   const [localStock, setLocalStock] = useState<Record<string, number>>(initialStockMap);
+  const [overDeductDialog, setOverDeductDialog] = useState<{
+    availableQty: number;
+    requestedQty: number;
+  } | null>(null);
   const { toast } = useToast();
   const { addUndoToast } = useUndoToast();
 
@@ -38,7 +44,7 @@ export function WastageLogger({ ingredients, stockMap: initialStockMap = {} }: {
     setSearch("");
   }
 
-  function handleSubmit() {
+  function performLog(confirmOverDeduction: boolean) {
     if (!reason || !selectedIngredient) return;
 
     startTransition(async () => {
@@ -46,9 +52,21 @@ export function WastageLogger({ ingredients, stockMap: initialStockMap = {} }: {
         ingredientId: selectedIngredient.id,
         quantity,
         reason,
+        confirmOverDeduction,
       });
 
       if (!result.success) {
+        const overDed = parseOverDeductionError(result.error);
+        if (overDed) {
+          setOverDeductDialog(overDed);
+          return;
+        }
+        if (result.error === "NO_LOTS_RECORDED") {
+          toast(
+            "This ingredient has no purchase history — log a purchase or set a manual cost first."
+          );
+          return;
+        }
         toast(result.error);
         return;
       }
@@ -65,9 +83,14 @@ export function WastageLogger({ ingredients, stockMap: initialStockMap = {} }: {
         return { ...prev, [selectedIngredient.id]: Math.max(0, current - quantity) };
       });
       toast(msg);
+      setOverDeductDialog(null);
       reset();
       window.dispatchEvent(new Event("wastage-updated"));
     });
+  }
+
+  function handleSubmit() {
+    performLog(false);
   }
 
   const filteredIngredients = ingredients.filter((i) =>
@@ -213,6 +236,22 @@ export function WastageLogger({ ingredients, stockMap: initialStockMap = {} }: {
         </div>
         );
       })()}
+
+      <ConfirmationDialog
+        open={overDeductDialog !== null}
+        title="Stock will be over-deducted"
+        message={
+          overDeductDialog
+            ? overDeductDialog.availableQty === 0
+              ? `No lot stock remaining. Logging ${overDeductDialog.requestedQty} will record the excess at the most-recent-lot's price.`
+              : `Stock available: ${overDeductDialog.availableQty}, requested: ${overDeductDialog.requestedQty}. Continue anyway? Excess will be recorded at most-recent-lot's price.`
+            : ""
+        }
+        confirmLabel="Continue"
+        destructive
+        onConfirm={() => performLog(true)}
+        onCancel={() => setOverDeductDialog(null)}
+      />
     </div>
   );
 }

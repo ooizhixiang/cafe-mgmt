@@ -7,6 +7,11 @@ import { formatCents } from "@/lib/format";
 import { StaleValueDialog } from "./stale-value-dialog";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { useToast } from "@/components/ui/toast";
+import { UnitPicker } from "@/components/ui/unit-picker";
+import {
+  convert,
+  formatConvertedQuantity,
+} from "@/lib/unit-conversion";
 import { Minus, Plus, Check, Pencil, Trash2, Star } from "lucide-react";
 import {
   IngredientSuppliersPanel,
@@ -18,11 +23,23 @@ interface IngredientCount {
   id: string;
   name: string;
   unit: string;
+  /**
+   * Optional manager-set display unit (within-dimension). When non-null,
+   * inventory rows render quantities converted into this unit. Storage stays
+   * in `unit` everywhere else.
+   */
+  displayUnit: string | null;
   category: string | null;
   isPinned: boolean;
   snapIncrement: number | null;
   containerProfile: string | null;
   costPerUnitInCents: number | null;
+  /**
+   * Derived per-unit cost (oldest non-empty lot, or fallback). Spec B2 — used
+   * for the per-row cost line so the displayed price tracks lot prices when
+   * the manual override is off.
+   */
+  derivedCostPerUnitInCents: number | null;
   unitsPerContainer: number | null;
   lowStockThreshold: number | null;
   ingredientSuppliers: IngredientSupplierRow[];
@@ -129,10 +146,12 @@ export function InventoryList({
   initialIngredients,
   suppliers,
   userRole,
+  enabledUnits = [],
 }: {
   initialIngredients: IngredientCount[];
   suppliers: SupplierOption[];
   userRole: "MANAGER" | "STAFF";
+  enabledUnits?: string[];
 }) {
   const isManager = userRole === "MANAGER";
   const [ingredients, setIngredients] = useState(initialIngredients);
@@ -155,7 +174,9 @@ export function InventoryList({
   const [deleteTarget, setDeleteTarget] = useState<IngredientCount | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newUnit, setNewUnit] = useState("Pieces");
+  // Empty initial value triggers UnitPicker's "Select unit…" placeholder so
+  // there's no silent state/DOM mismatch with the rendered <select>.
+  const [newUnit, setNewUnit] = useState("");
   const [search, setSearch] = useState("");
   const [expandedIngId, setExpandedIngId] = useState<string | null>(null);
   const [showSuppliersFor, setShowSuppliersFor] = useState<string | null>(null);
@@ -182,7 +203,7 @@ export function InventoryList({
     setEditForm({
       name: ing.name,
       unit: ing.unit,
-      costPerUnitInCents: ing.costPerUnitInCents ? (ing.costPerUnitInCents / 100).toFixed(2) : "",
+      costPerUnitInCents: ing.costPerUnitInCents ? (Math.floor(ing.costPerUnitInCents) / 100).toFixed(2) : "",
       lowStockThreshold: ing.lowStockThreshold?.toString() ?? "",
     });
   }
@@ -200,8 +221,12 @@ export function InventoryList({
 
       // Update config (cost, threshold, supplier)
       const costInCents = editForm.costPerUnitInCents
-        ? Math.round(parseFloat(editForm.costPerUnitInCents) * 100)
+        ? parseFloat(editForm.costPerUnitInCents) * 100
         : null;
+      if (costInCents !== null && !Number.isFinite(costInCents)) {
+        toast("Invalid cost");
+        return;
+      }
       const threshold = editForm.lowStockThreshold
         ? parseInt(editForm.lowStockThreshold)
         : null;
@@ -532,9 +557,9 @@ export function InventoryList({
 
                 {/* Row 2: Price, threshold, category */}
                 <div className="flex flex-wrap gap-x-[var(--space-3)] gap-y-0.5 mb-[var(--space-2)]">
-                  {ing.costPerUnitInCents !== null && (
+                  {ing.derivedCostPerUnitInCents !== null && (
                     <span className="text-meta text-[var(--text-secondary)]">
-                      {formatCents(ing.costPerUnitInCents)}/{ing.unit}
+                      {formatCents(ing.derivedCostPerUnitInCents)}/{ing.unit}
                     </span>
                   )}
                   {ing.category && (
@@ -548,6 +573,63 @@ export function InventoryList({
                     </span>
                   )}
                 </div>
+
+                {/* Row 2.5: Inline supplier chips (max 3 + "+N more") — sorted by price asc to match IngredientSuppliersPanel */}
+                {ing.ingredientSuppliers.length > 0 && (() => {
+                  const sorted = [...ing.ingredientSuppliers].sort(
+                    (a, b) => a.priceInCents - b.priceInCents
+                  );
+                  const visible = sorted.slice(0, 3);
+                  const overflow = sorted.length - visible.length;
+                  return (
+                    <div
+                      className="flex flex-wrap gap-1 mb-[var(--space-2)]"
+                      data-testid={`inline-supplier-chips-${ing.id}`}
+                    >
+                      {visible.map((s) => (
+                        <span
+                          key={s.id}
+                          className="text-meta rounded-full bg-[var(--bg-secondary,#f3f4f6)] px-2 py-0.5 text-[var(--text-secondary)] max-w-[8rem] truncate"
+                          title={s.supplierName}
+                        >
+                          {s.supplierName}
+                        </span>
+                      ))}
+                      {overflow > 0 && (
+                        <span
+                          aria-label={`${overflow} more supplier${overflow === 1 ? "" : "s"}`}
+                          className="text-meta rounded-full bg-[var(--bg-secondary,#f3f4f6)] px-2 py-0.5 text-[var(--text-secondary)]"
+                        >
+                          +{overflow} more
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Display-unit hint: show the converted amount when the
+                    manager has set a per-ingredient display unit. The stepper
+                    below stays in the storage unit so increments remain integer-
+                    safe; this line gives the manager the at-a-glance number
+                    they actually wanted to see. */}
+                {ing.displayUnit && ing.displayUnit !== ing.unit && (() => {
+                  const converted = convert(displayValue, ing.unit, ing.displayUnit);
+                  if (converted === null) {
+                    return (
+                      <p className="text-meta text-[var(--text-secondary)] mb-[var(--space-1)]">
+                        ≈ — (check display unit)
+                      </p>
+                    );
+                  }
+                  return (
+                    <p
+                      className="text-meta text-[var(--text-secondary)] mb-[var(--space-1)]"
+                      aria-label={`Converted display value`}
+                    >
+                      ≈ {formatConvertedQuantity(converted)} {ing.displayUnit}
+                    </p>
+                  );
+                })()}
 
                 {/* Row 3: Stepper */}
                 <QuantityStepper
@@ -605,6 +687,7 @@ export function InventoryList({
                             purchases={ing.ingredientPurchases}
                             allSuppliers={suppliers}
                             mode={isManager ? "manager" : "readonly"}
+                            enabledUnits={enabledUnits}
                           />
                         </div>
                       )}
@@ -644,18 +727,18 @@ export function InventoryList({
               />
             </div>
             <div>
-              <input
-                type="text"
-                placeholder="Unit"
+              <UnitPicker
                 value={newUnit}
-                onChange={(e) => setNewUnit(e.target.value)}
+                onChange={setNewUnit}
+                enabledUnits={enabledUnits}
+                ariaLabel="New ingredient unit"
                 className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-body"
               />
             </div>
           </div>
           <div className="flex justify-end gap-[var(--space-2)]">
             <button
-              onClick={() => { setShowAdd(false); setNewName(""); setNewUnit("Pieces"); }}
+              onClick={() => { setShowAdd(false); setNewName(""); setNewUnit(""); }}
               className="rounded-lg border border-[var(--border-default)] px-3 py-1.5 text-meta font-medium"
             >
               Cancel
@@ -664,17 +747,19 @@ export function InventoryList({
               onClick={() => {
                 if (!newName.trim() || !newUnit.trim()) return;
                 startTransition(async () => {
-                  const result = await addIngredient(newName.trim(), newUnit.trim());
+                  const result = await addIngredient(newName.trim(), newUnit.trim(), "Unassigned");
                   if (!result.success) { toast(result.error); return; }
                   setIngredients((prev) => [...prev, {
                     id: result.data.id,
                     name: newName.trim(),
                     unit: newUnit.trim(),
-                    category: null,
+                    displayUnit: null,
+                    category: "Unassigned",
                     isPinned: false,
                     snapIncrement: null,
                     containerProfile: null,
                     costPerUnitInCents: null,
+                    derivedCostPerUnitInCents: null,
                     unitsPerContainer: null,
                     lowStockThreshold: null,
                     ingredientSuppliers: [],
@@ -684,7 +769,7 @@ export function InventoryList({
                     previousCount: null,
                   }]);
                   setNewName("");
-                  setNewUnit("Pieces");
+                  setNewUnit("");
                   setShowAdd(false);
                   toast("Ingredient added");
                 });

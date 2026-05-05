@@ -7,7 +7,7 @@ export default async function SuppliersPage() {
   const cafeId = session.user.cafeId;
   const isManager = session.user.role === "MANAGER";
 
-  const [suppliers, allIngredients] = await Promise.all([
+  const [suppliers, allIngredients, cafe] = await Promise.all([
     prisma.supplier.findMany({
       where: { cafeId },
       include: {
@@ -23,6 +23,10 @@ export default async function SuppliersPage() {
       where: { cafeId },
       select: { id: true, name: true, unit: true },
       orderBy: { name: "asc" },
+    }),
+    prisma.cafe.findUnique({
+      where: { id: cafeId },
+      select: { enabledUnits: true },
     }),
   ]);
 
@@ -52,7 +56,7 @@ export default async function SuppliersPage() {
         ingredientId: link.ingredient.id,
         ingredientName: link.ingredient.name,
         unit: link.unit,
-        priceInCents: link.priceInCents,
+        priceInCents: link.priceInCents.toNumber(),
         linkedToSupplier: true,
       });
     }
@@ -85,6 +89,7 @@ export default async function SuppliersPage() {
         initialSuppliers={supplierData}
         allIngredients={fallbackIngredients}
         isManager={isManager}
+        enabledUnits={cafe?.enabledUnits ?? []}
       />
     </div>
   );

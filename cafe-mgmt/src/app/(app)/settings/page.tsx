@@ -10,6 +10,8 @@ import { TimeBoundaries } from "@/components/settings/time-boundaries";
 import { CompBudgetSettings } from "@/components/settings/comp-budget";
 import { DarkModeToggle } from "@/components/settings/dark-mode-toggle";
 import { PushToggle } from "@/components/settings/push-toggle";
+import { EnabledUnitsEditor } from "@/components/settings/enabled-units";
+import { MinMarginSettings } from "@/components/settings/min-margin";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -55,6 +57,8 @@ export default async function SettingsPage() {
             midDayEnd: true,
             closingStart: true,
             closingEnd: true,
+            enabledUnits: true,
+            minMarginPercent: true,
           },
         })
       : null,
@@ -120,30 +124,36 @@ export default async function SettingsPage() {
           </section>
         )}
 
-        {/* Ingredient Configuration (Story 3.1) */}
-        {isManager && (
-          <section>
-            <h2 className="text-value mb-[var(--space-3)]">Ingredient Configuration</h2>
-            <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
-              <p className="text-body text-[var(--text-secondary)] mb-[var(--space-3)]">
-                Set costs, thresholds, and tracking options for ingredients.
-              </p>
-              <Link
-                href="/settings/ingredients"
-                className="text-body text-[var(--color-info)] font-medium"
-              >
-                Configure ingredients →
-              </Link>
-            </div>
-          </section>
-        )}
-
         {/* Comp Budget (Story 3.8) */}
         {isManager && (
           <section>
             <h2 className="text-value mb-[var(--space-3)]">Complimentary Budget</h2>
             <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
               <CompBudgetSettings initialBudget={compBudget} />
+            </div>
+          </section>
+        )}
+
+        {/* Units (cafe-enabled-units feature) */}
+        {isManager && cafe && (
+          <section>
+            <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
+              <EnabledUnitsEditor
+                initialEnabledUnits={cafe.enabledUnits}
+                isManager={isManager}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Minimum Margin (recipe-margin-alert-cards feature) */}
+        {isManager && cafe && (
+          <section>
+            <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
+              <MinMarginSettings
+                initialValue={cafe.minMarginPercent}
+                isManager={isManager}
+              />
             </div>
           </section>
         )}

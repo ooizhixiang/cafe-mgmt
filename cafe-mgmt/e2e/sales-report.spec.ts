@@ -45,23 +45,22 @@ test.describe("Sales Report Feature", () => {
       await page.click('text="Looks good — go to my cafe"');
       await page.waitForURL("/", { timeout: 10000 });
     } else {
-      // Already on main page — add ingredients via settings
-      await page.goto("/settings/ingredients");
+      // Already on main page — add ingredients via the spreadsheet at /ingredients
+      await page.goto("/ingredients");
       await page.waitForTimeout(2000);
 
-      // Add Espresso
-      const addBtn = page.getByText("Add ingredient");
-      await addBtn.click();
-      await page.fill('input[placeholder="Name"]', "Espresso");
-      await page.fill('input[placeholder="Unit (e.g. lbs, oz, bags)"]', "shots");
-      await page.locator("button.text-\\[var\\(--color-success\\)\\]").first().click();
+      // Add Espresso via the sticky add-row at the bottom of the spreadsheet
+      await page.getByLabel("New ingredient name").fill("Espresso");
+      await page.getByLabel("New ingredient unit").fill("shots");
+      await page.getByRole("button", { name: "Add ingredient" }).click();
       await page.waitForTimeout(2000);
+      // Wait for first add to complete (name input clears) before starting second
+      await expect(page.getByLabel("New ingredient name")).toHaveValue("");
 
       // Add Milk
-      await addBtn.click();
-      await page.fill('input[placeholder="Name"]', "Milk");
-      await page.fill('input[placeholder="Unit (e.g. lbs, oz, bags)"]', "oz");
-      await page.locator("button.text-\\[var\\(--color-success\\)\\]").first().click();
+      await page.getByLabel("New ingredient name").fill("Milk");
+      await page.getByLabel("New ingredient unit").fill("oz");
+      await page.getByRole("button", { name: "Add ingredient" }).click();
       await page.waitForTimeout(2000);
     }
 

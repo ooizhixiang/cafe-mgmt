@@ -5,6 +5,8 @@ import { logComp } from "@/actions/comp.actions";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
 import { useUndoToast } from "@/components/providers/undo-toast-provider";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { parseOverDeductionError } from "@/lib/lot-consume";
 
 interface Ingredient {
   id: string;
@@ -18,6 +20,10 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
   const [reason, setReason] = useState("");
   const [search, setSearch] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [overDeductDialog, setOverDeductDialog] = useState<{
+    availableQty: number;
+    requestedQty: number;
+  } | null>(null);
   const { toast } = useToast();
   const { addUndoToast } = useUndoToast();
 
@@ -28,7 +34,7 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
     setSearch("");
   }
 
-  function handleSubmit() {
+  function performLog(confirmOverDeduction: boolean) {
     if (!selectedIngredient || !reason.trim()) return;
 
     startTransition(async () => {
@@ -36,9 +42,21 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
         ingredientId: selectedIngredient.id,
         quantity,
         reason: reason.trim(),
+        confirmOverDeduction,
       });
 
       if (!result.success) {
+        const overDed = parseOverDeductionError(result.error);
+        if (overDed) {
+          setOverDeductDialog(overDed);
+          return;
+        }
+        if (result.error === "NO_LOTS_RECORDED") {
+          toast(
+            "This ingredient has no purchase history — log a purchase or set a manual cost first."
+          );
+          return;
+        }
         toast(result.error);
         return;
       }
@@ -51,9 +69,14 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
         ? ` (${formatCents(result.data.budgetRemainingInCents)} remaining)`
         : "";
       toast(`${formatCents(result.data.dollarValueInCents)} complimentary logged${budgetMsg}`);
+      setOverDeductDialog(null);
       reset();
       window.dispatchEvent(new Event("comp-updated"));
     });
+  }
+
+  function handleSubmit() {
+    performLog(false);
   }
 
   const filteredIngredients = ingredients.filter((i) =>
@@ -87,6 +110,7 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
   }
 
   return (
+    <>
     <div className="rounded-lg p-[var(--space-4)]" style={{ boxShadow: "var(--shadow-card)" }}>
       <h3 className="text-body font-semibold mb-[var(--space-3)]">
         Log Complimentary — {selectedIngredient.name}
@@ -145,5 +169,22 @@ export function CompLogger({ ingredients }: { ingredients: Ingredient[] }) {
         </button>
       </div>
     </div>
+
+      <ConfirmationDialog
+        open={overDeductDialog !== null}
+        title="Stock will be over-deducted"
+        message={
+          overDeductDialog
+            ? overDeductDialog.availableQty === 0
+              ? `No lot stock remaining. Logging ${overDeductDialog.requestedQty} will record the excess at the most-recent-lot's price.`
+              : `Stock available: ${overDeductDialog.availableQty}, requested: ${overDeductDialog.requestedQty}. Continue anyway? Excess will be recorded at most-recent-lot's price.`
+            : ""
+        }
+        confirmLabel="Continue"
+        destructive
+        onConfirm={() => performLog(true)}
+        onCancel={() => setOverDeductDialog(null)}
+      />
+    </>
   );
 }

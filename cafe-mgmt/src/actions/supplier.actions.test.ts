@@ -22,7 +22,7 @@ const purchasePayloadSchema = z.object({
   ingredientSupplierId: z.string().min(1),
   quantity: z.number().int().min(1),
   unit: z.string().min(1).max(20),
-  totalPriceInCents: z.number().int().min(0),
+  totalPriceInCents: z.number().min(0),
 });
 
 const logOutcomeSchema = z.object({

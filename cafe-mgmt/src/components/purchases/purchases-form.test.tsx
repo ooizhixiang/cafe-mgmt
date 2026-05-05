@@ -6,6 +6,10 @@ vi.mock("@/actions/inventory.actions", () => ({
   bulkCreateIngredientPurchases: vi.fn(),
 }));
 
+vi.mock("@/actions/setup.actions", () => ({
+  addIngredientSupplier: vi.fn(),
+}));
+
 // Mock the toast context to avoid wrapping in provider
 const toastSpy = vi.fn();
 vi.mock("@/components/ui/toast", () => ({
@@ -13,6 +17,7 @@ vi.mock("@/components/ui/toast", () => ({
 }));
 
 import { bulkCreateIngredientPurchases } from "@/actions/inventory.actions";
+import { addIngredientSupplier } from "@/actions/setup.actions";
 import { PurchasesForm } from "./purchases-form";
 
 const suppliers = [
@@ -303,5 +308,159 @@ describe("PurchasesForm — submit", () => {
     expect(
       (screen.getByLabelText("Ingredient line 1") as HTMLSelectElement).value
     ).toBe("ing-milk");
+  });
+});
+
+describe("PurchasesForm — '+ Link new ingredient' inline mini-form", () => {
+  const cafeIngredients = [
+    { id: "ing-milk", name: "Milk", unit: "L" },
+    { id: "ing-sugar", name: "Sugar", unit: "kg" },
+    { id: "ing-flour", name: "Flour", unit: "kg" },
+  ];
+
+  it("renders the '+ Link new ingredient…' option when there are unlinked cafe ingredients", () => {
+    render(
+      <PurchasesForm
+        initialSuppliers={suppliers}
+        allIngredients={cafeIngredients}
+      />
+    );
+    pickSupplier("sup1");
+
+    const select = screen.getByLabelText("Ingredient line 1") as HTMLSelectElement;
+    const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+    // sup1 has Milk + Sugar linked; Flour is the only unlinked one. Sentinel
+    // is positioned right after the placeholder so it's discoverable.
+    expect(labels).toContain("+ Link new ingredient…");
+  });
+
+  it("opens mini-form, calls addIngredientSupplier, and threads the new link into the line on save", async () => {
+    vi.mocked(addIngredientSupplier).mockResolvedValue({
+      success: true,
+      data: { id: "link-flour" },
+    });
+
+    render(
+      <PurchasesForm
+        initialSuppliers={suppliers}
+        allIngredients={cafeIngredients}
+      />
+    );
+    pickSupplier("sup1");
+
+    // Pick the sentinel — should open the mini-form without committing the line.
+    fireEvent.change(screen.getByLabelText("Ingredient line 1"), {
+      target: { value: "__ADD_NEW__" },
+    });
+    expect(screen.getByTestId("add-link-form-1")).toBeDefined();
+
+    // Save button is disabled while the mini-form is empty.
+    const saveBtn = screen.getByRole("button", { name: /save new ingredient line 1/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Fill ingredient + price + unit (only Flour is unlinked).
+    fireEvent.change(screen.getByLabelText("New ingredient line 1"), {
+      target: { value: "ing-flour" },
+    });
+    fireEvent.change(screen.getByLabelText("New ingredient price line 1"), {
+      target: { value: "5.00" },
+    });
+    fireEvent.change(screen.getByLabelText("New ingredient unit line 1"), {
+      target: { value: "kg" },
+    });
+
+    // Now save is enabled.
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(addIngredientSupplier).toHaveBeenCalledWith({
+        supplierId: "sup1",
+        ingredientId: "ing-flour",
+        priceInCents: 500,
+        unit: "kg",
+      });
+    });
+
+    // Mini-form closes, and the line's ingredient is now the freshly-linked one.
+    await waitFor(() => {
+      expect(screen.queryByTestId("add-link-form-1")).toBeNull();
+    });
+    expect(
+      (screen.getByLabelText("Ingredient line 1") as HTMLSelectElement).value
+    ).toBe("ing-flour");
+    // Unit + unit price prefilled from the new link.
+    expect((screen.getByLabelText("Unit line 1") as HTMLInputElement).value).toBe("kg");
+    expect(
+      (screen.getByLabelText("Unit price line 1") as HTMLInputElement).value
+    ).toBe("5.00");
+  });
+
+  it("keeps the mini-form open and toasts when addIngredientSupplier fails (e.g. duplicate)", async () => {
+    vi.mocked(addIngredientSupplier).mockResolvedValue({
+      success: false,
+      error: "Supplier already added",
+    });
+
+    render(
+      <PurchasesForm
+        initialSuppliers={suppliers}
+        allIngredients={cafeIngredients}
+      />
+    );
+    pickSupplier("sup1");
+
+    fireEvent.change(screen.getByLabelText("Ingredient line 1"), {
+      target: { value: "__ADD_NEW__" },
+    });
+    fireEvent.change(screen.getByLabelText("New ingredient line 1"), {
+      target: { value: "ing-flour" },
+    });
+    fireEvent.change(screen.getByLabelText("New ingredient price line 1"), {
+      target: { value: "5.00" },
+    });
+    fireEvent.change(screen.getByLabelText("New ingredient unit line 1"), {
+      target: { value: "kg" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save new ingredient line 1/i })
+    );
+
+    await waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith("Supplier already added");
+    });
+
+    // Mini-form stays open so the manager can correct.
+    expect(screen.getByTestId("add-link-form-1")).toBeDefined();
+    // Line's ingredient was never committed — still empty.
+    expect(
+      (screen.getByLabelText("Ingredient line 1") as HTMLSelectElement).value
+    ).toBe("");
+  });
+
+  it("Cancel resets the line's ingredient pick and closes the mini-form", () => {
+    render(
+      <PurchasesForm
+        initialSuppliers={suppliers}
+        allIngredients={cafeIngredients}
+      />
+    );
+    pickSupplier("sup1");
+
+    fireEvent.change(screen.getByLabelText("Ingredient line 1"), {
+      target: { value: "__ADD_NEW__" },
+    });
+    expect(screen.getByTestId("add-link-form-1")).toBeDefined();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /cancel link new ingredient line 1/i })
+    );
+
+    expect(screen.queryByTestId("add-link-form-1")).toBeNull();
+    // Line's ingredient never committed (we never selected a real one).
+    expect(
+      (screen.getByLabelText("Ingredient line 1") as HTMLSelectElement).value
+    ).toBe("");
   });
 });

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Package,
+  Carrot,
   AlertTriangle,
   ClipboardList,
   Truck,
@@ -25,6 +26,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Feed", icon: LayoutDashboard },
   { href: "/inventory", label: "Inventory", icon: Package },
+  { href: "/ingredients", label: "Ingredients", icon: Carrot, managerOnly: true },
   { href: "/wastage", label: "Wastage", icon: AlertTriangle },
   { href: "/daily-report", label: "Sales", icon: ClipboardList },
   { href: "/suppliers", label: "Suppliers", icon: Truck },

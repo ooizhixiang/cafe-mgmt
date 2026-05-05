@@ -26,7 +26,7 @@ const purchasePayloadSchema = z.object({
   ingredientSupplierId: z.string().min(1),
   quantity: z.number().int().min(1),
   unit: z.string().min(1).max(20),
-  totalPriceInCents: z.number().int().min(0),
+  totalPriceInCents: z.number().min(0),
 });
 
 const logOutcomeSchema = z.object({
@@ -246,6 +246,7 @@ export async function logCallOutcome(
               ingredientSupplierId: purchase.ingredientSupplierId,
               cafeId,
               quantity: purchase.quantity,
+              remainingQuantity: purchase.quantity,
               unit: purchase.unit,
               totalPriceInCents: purchase.totalPriceInCents,
               supplierCallLogId: callLog.id,

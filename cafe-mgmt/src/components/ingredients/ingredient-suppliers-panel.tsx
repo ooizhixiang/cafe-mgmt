@@ -8,8 +8,10 @@ import {
   updateIngredientSupplier,
   removeIngredientSupplier,
 } from "@/actions/setup.actions";
+import { UnitPicker } from "@/components/ui/unit-picker";
+import { DEFAULT_ENABLED_UNITS } from "@/lib/units";
 import { createIngredientPurchase } from "@/actions/inventory.actions";
-import { parseRMToCents } from "@/lib/format";
+import { parseRMToCentsPrecise } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 
@@ -26,6 +28,7 @@ export interface IngredientPurchaseRow {
   ingredientSupplierId: string;
   supplierName: string;
   quantity: number;
+  remainingQuantity: number;
   unit: string;
   totalPriceInCents: number;
   createdAt: string;
@@ -42,10 +45,11 @@ interface Props {
   purchases: IngredientPurchaseRow[];
   allSuppliers: SupplierOption[];
   mode: "manager" | "readonly";
+  enabledUnits?: string[];
 }
 
 function formatRM(cents: number): string {
-  return `RM ${(cents / 100).toFixed(2)}`;
+  return `RM ${(Math.floor(cents) / 100).toFixed(2)}`;
 }
 
 function formatDate(iso: string): string {
@@ -62,6 +66,7 @@ export function IngredientSuppliersPanel({
   purchases: initialPurchases,
   allSuppliers,
   mode,
+  enabledUnits = DEFAULT_ENABLED_UNITS,
 }: Props) {
   const isManager = mode === "manager";
   const [suppliers, setSuppliers] = useState(initialSuppliers);
@@ -104,12 +109,12 @@ export function IngredientSuppliersPanel({
 
   function startEdit(row: IngredientSupplierRow) {
     setEditingId(row.id);
-    setEditPrice((row.priceInCents / 100).toFixed(2));
+    setEditPrice((Math.floor(row.priceInCents) / 100).toFixed(2));
     setEditUnit(row.unit);
   }
 
   function handleSaveEdit(row: IngredientSupplierRow) {
-    const priceInCents = parseRMToCents(editPrice);
+    const priceInCents = parseRMToCentsPrecise(editPrice);
     if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
@@ -145,7 +150,7 @@ export function IngredientSuppliersPanel({
       toast("Choose a supplier");
       return;
     }
-    const priceInCents = parseRMToCents(addPrice);
+    const priceInCents = parseRMToCentsPrecise(addPrice);
     if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
@@ -214,7 +219,7 @@ export function IngredientSuppliersPanel({
       toast("Unit required");
       return;
     }
-    const totalPriceInCents = parseRMToCents(purchaseTotal);
+    const totalPriceInCents = parseRMToCentsPrecise(purchaseTotal);
     if (totalPriceInCents === null || totalPriceInCents < 0) {
       toast("Invalid total");
       return;
@@ -238,6 +243,7 @@ export function IngredientSuppliersPanel({
           ingredientSupplierId: link.id,
           supplierName: link.supplierName,
           quantity: qty,
+          remainingQuantity: qty,
           unit,
           totalPriceInCents,
           createdAt: new Date().toISOString(),
@@ -416,11 +422,11 @@ export function IngredientSuppliersPanel({
                 <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
                   Unit
                 </label>
-                <input
-                  type="text"
+                <UnitPicker
                   value={addUnit}
-                  onChange={(e) => setAddUnit(e.target.value)}
-                  placeholder="kg"
+                  onChange={setAddUnit}
+                  enabledUnits={enabledUnits}
+                  ariaLabel="New supplier link unit"
                   className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
                 />
               </div>

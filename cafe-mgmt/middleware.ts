@@ -2,7 +2,7 @@ import { auth } from "./auth";
 import { NextResponse } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/register", "/invite", "/forgot-password", "/reset-password"];
-const MANAGER_ONLY_PATHS = ["/settings", "/inventory"];
+const MANAGER_ONLY_PATHS = ["/settings", "/inventory", "/ingredients"];
 const SETUP_PATHS = ["/setup"];
 
 export default auth((req) => {

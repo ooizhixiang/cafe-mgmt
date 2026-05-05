@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Plus, Trash2, X, Check } from "lucide-react";
 import { bulkCreateIngredientPurchases } from "@/actions/inventory.actions";
-import { parseRMToCents } from "@/lib/format";
+import { addIngredientSupplier } from "@/actions/setup.actions";
+import { parseRMToCents, parseRMToCentsPrecise } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
+import { UnitPicker } from "@/components/ui/unit-picker";
+import { DEFAULT_ENABLED_UNITS } from "@/lib/units";
 
 export interface SupplierLink {
   id: string;
@@ -20,8 +23,21 @@ export interface SupplierData {
   links: SupplierLink[];
 }
 
+export interface IngredientOption {
+  id: string;
+  name: string;
+  unit: string;
+}
+
 interface Props {
   initialSuppliers: SupplierData[];
+  allIngredients?: IngredientOption[];
+  /**
+   * Cafe-managed unit picker vocabulary. Defaults to the project-wide
+   * `DEFAULT_ENABLED_UNITS` so callers (and tests) that don't thread the
+   * cafe's actual list still render a usable picker.
+   */
+  enabledUnits?: string[];
 }
 
 interface LineRow {
@@ -34,6 +50,8 @@ interface LineRow {
   unitPriceTouched: boolean;
   totalTouched: boolean;
 }
+
+const ADD_NEW_SENTINEL = "__ADD_NEW__";
 
 let nextKey = 0;
 function makeKey(): string {
@@ -58,12 +76,28 @@ function priceCentsToRM(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
-export function PurchasesForm({ initialSuppliers }: Props) {
+export function PurchasesForm({ initialSuppliers, allIngredients = [], enabledUnits = DEFAULT_ENABLED_UNITS }: Props) {
   const [supplierId, setSupplierId] = useState<string>("");
+  // Local supplier state so the inline "+ Link new ingredient" mini-form can
+  // optimistically insert a fresh link without a page round-trip.
+  const [suppliers, setSuppliers] = useState<SupplierData[]>(initialSuppliers);
   const [lines, setLines] = useState<LineRow[]>(() => [blankLine()]);
   const [isPending, startTransition] = useTransition();
   const submittingRef = useRef(false);
   const { toast } = useToast();
+
+  // Keep local supplier state in sync with parent re-renders (e.g. router refresh).
+  useEffect(() => {
+    setSuppliers(initialSuppliers);
+  }, [initialSuppliers]);
+
+  // Per-line "+ Link new ingredient" mini-form state. Only one line can have
+  // the mini-form open at a time (matches the supplier-list inline picker UX).
+  const [addingForLineKey, setAddingForLineKey] = useState<string | null>(null);
+  const [addNewIngredientId, setAddNewIngredientId] = useState<string>("");
+  const [addNewPriceRM, setAddNewPriceRM] = useState<string>("");
+  const [addNewUnit, setAddNewUnit] = useState<string>("");
+  const [addNewSubmitting, setAddNewSubmitting] = useState(false);
 
   function lineHasUserData(line: LineRow): boolean {
     return Boolean(
@@ -72,8 +106,8 @@ export function PurchasesForm({ initialSuppliers }: Props) {
   }
 
   const currentSupplier = useMemo(
-    () => initialSuppliers.find((s) => s.id === supplierId) ?? null,
-    [supplierId, initialSuppliers]
+    () => suppliers.find((s) => s.id === supplierId) ?? null,
+    [supplierId, suppliers]
   );
 
   const linkByIngredient = useMemo(() => {
@@ -93,6 +127,18 @@ export function PurchasesForm({ initialSuppliers }: Props) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [currentSupplier]);
 
+  // Ingredients that can be linked to this supplier from the mini-form: any
+  // cafe ingredient not yet linked to the current supplier.
+  const ingredientsAvailableToLink = useMemo(() => {
+    if (!currentSupplier) return [] as IngredientOption[];
+    const linked = new Set(currentSupplier.links.map((l) => l.ingredientId));
+    return allIngredients
+      .filter((i) => !linked.has(i.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [currentSupplier, allIngredients]);
+
+  // The set-anywhere-but-not-on-supplier case: no point showing the empty-state
+  // banner if at least one cafe ingredient is available to link.
   const supplierHasNoLinkedIngredients =
     Boolean(currentSupplier) && supplierIngredients.length === 0;
 
@@ -106,6 +152,7 @@ export function PurchasesForm({ initialSuppliers }: Props) {
     }
     setSupplierId(newId);
     setLines([blankLine()]);
+    closeAddNew();
   }
 
   function recomputeTotal(qty: string, unitPriceRM: string): string {
@@ -124,7 +171,30 @@ export function PurchasesForm({ initialSuppliers }: Props) {
     );
   }
 
+  function applyLinkToLine(line: LineRow, link: SupplierLink): LineRow {
+    const next: LineRow = {
+      ...line,
+      ingredientId: link.ingredientId,
+      unit: link.unit,
+      unitPriceRM: priceCentsToRM(link.priceInCents),
+      unitPriceTouched: false,
+      totalTouched: false,
+    };
+    next.totalRM = recomputeTotal(next.quantity, next.unitPriceRM);
+    return next;
+  }
+
   function handleIngredientChange(key: string, ingredientId: string) {
+    if (ingredientId === ADD_NEW_SENTINEL) {
+      // Open the inline mini-form for this line. Don't commit any ingredient
+      // selection on the line yet — wait for the manager to save.
+      setAddingForLineKey(key);
+      setAddNewIngredientId("");
+      setAddNewPriceRM("");
+      setAddNewUnit("");
+      return;
+    }
+
     const link = linkByIngredient.get(ingredientId);
     const unit = link?.unit ?? "";
     const unitPriceRM = link ? priceCentsToRM(link.priceInCents) : "";
@@ -189,10 +259,90 @@ export function PurchasesForm({ initialSuppliers }: Props) {
 
   function removeLine(key: string) {
     setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.key !== key)));
+    if (addingForLineKey === key) {
+      closeAddNew();
+    }
   }
 
   function resetForm() {
     setLines([blankLine()]);
+    closeAddNew();
+  }
+
+  function closeAddNew() {
+    setAddingForLineKey(null);
+    setAddNewIngredientId("");
+    setAddNewPriceRM("");
+    setAddNewUnit("");
+    setAddNewSubmitting(false);
+  }
+
+  // Mini-form save validity: ingredient picked, price > 0, unit non-empty.
+  const addNewPriceCents = useMemo(
+    () => parseRMToCentsPrecise(addNewPriceRM),
+    [addNewPriceRM]
+  );
+  const canSaveAddNew =
+    Boolean(addNewIngredientId) &&
+    addNewPriceCents !== null &&
+    addNewPriceCents > 0 &&
+    addNewUnit.trim().length > 0;
+
+  async function handleSaveAddNew() {
+    if (!supplierId || !addingForLineKey) return;
+    if (!canSaveAddNew || addNewPriceCents === null) {
+      toast("Fill ingredient, price, and unit");
+      return;
+    }
+    setAddNewSubmitting(true);
+    try {
+      const result = await addIngredientSupplier({
+        supplierId,
+        ingredientId: addNewIngredientId,
+        priceInCents: addNewPriceCents,
+        unit: addNewUnit.trim(),
+      });
+      if (!result.success) {
+        toast(result.error);
+        // Keep the mini-form open so the manager can correct (e.g. duplicate).
+        setAddNewSubmitting(false);
+        return;
+      }
+
+      // Build the new link from the action's response + form data.
+      const ingredient = allIngredients.find((i) => i.id === addNewIngredientId);
+      const newLink: SupplierLink = {
+        id: result.data.id,
+        ingredientId: addNewIngredientId,
+        ingredientName: ingredient?.name ?? "",
+        unit: addNewUnit.trim(),
+        priceInCents: addNewPriceCents,
+      };
+
+      // Optimistically insert into the current supplier's links.
+      setSuppliers((prev) =>
+        prev.map((s) =>
+          s.id === supplierId
+            ? {
+                ...s,
+                links: [...s.links, newLink].sort((a, b) =>
+                  a.ingredientName.localeCompare(b.ingredientName)
+                ),
+              }
+            : s
+        )
+      );
+
+      // Apply the new link to the line that opened the mini-form.
+      const lineKey = addingForLineKey;
+      setLines((prev) =>
+        prev.map((line) => (line.key === lineKey ? applyLinkToLine(line, newLink) : line))
+      );
+
+      closeAddNew();
+    } finally {
+      setAddNewSubmitting(false);
+    }
   }
 
   function handleSubmit() {
@@ -274,13 +424,23 @@ export function PurchasesForm({ initialSuppliers }: Props) {
     });
   }
 
-  if (initialSuppliers.length === 0) {
+  if (suppliers.length === 0) {
     return (
       <p className="text-meta text-[var(--text-secondary)]">
         Add a supplier first to log purchases.
       </p>
     );
   }
+
+  // The "+ Link new ingredient" sentinel only makes sense when we have at
+  // least one cafe ingredient that isn't yet linked to the supplier.
+  const canShowAddNewSentinel =
+    Boolean(currentSupplier) && ingredientsAvailableToLink.length > 0;
+
+  // When the supplier has no linked products yet but we have ingredients
+  // available, allow the manager to start with the mini-form directly.
+  const showEmptyStateWithAdd =
+    supplierHasNoLinkedIngredients && ingredientsAvailableToLink.length > 0;
 
   return (
     <div className="space-y-[var(--space-4)]">
@@ -296,7 +456,7 @@ export function PurchasesForm({ initialSuppliers }: Props) {
           className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-body"
         >
           <option value="">Choose…</option>
-          {initialSuppliers.map((s) => (
+          {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -304,19 +464,29 @@ export function PurchasesForm({ initialSuppliers }: Props) {
         </select>
       </div>
 
-      {/* Lines */}
-      {supplierId && supplierHasNoLinkedIngredients && (
+      {/* Empty state — supplier has no linked products */}
+      {supplierId && supplierHasNoLinkedIngredients && !showEmptyStateWithAdd && (
         <p className="text-meta text-[var(--text-secondary)] rounded border border-[var(--border-default)] p-[var(--space-3)]">
           This supplier has no products yet. Add one in Suppliers.
         </p>
       )}
 
-      {supplierId && !supplierHasNoLinkedIngredients && (
+      {supplierId && showEmptyStateWithAdd && (
+        <p className="text-meta text-[var(--text-secondary)] rounded border border-[var(--border-default)] p-[var(--space-3)]">
+          This supplier has no products yet. Use{" "}
+          <span className="font-medium">+ Link new ingredient</span> on a line
+          to link one.
+        </p>
+      )}
+
+      {/* Lines */}
+      {supplierId && (!supplierHasNoLinkedIngredients || showEmptyStateWithAdd) && (
         <div className="space-y-[var(--space-3)]">
           <p className="text-meta font-semibold text-[var(--text-secondary)]">
             Lines
           </p>
           {lines.map((line, idx) => {
+            const isAddingHere = addingForLineKey === line.key;
             return (
               <div
                 key={line.key}
@@ -351,6 +521,11 @@ export function PurchasesForm({ initialSuppliers }: Props) {
                     className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-body"
                   >
                     <option value="">Choose…</option>
+                    {canShowAddNewSentinel && (
+                      <option value={ADD_NEW_SENTINEL}>
+                        + Link new ingredient…
+                      </option>
+                    )}
                     {supplierIngredients.map((i) => (
                       <option key={i.id} value={i.id}>
                         {i.name}
@@ -358,6 +533,93 @@ export function PurchasesForm({ initialSuppliers }: Props) {
                     ))}
                   </select>
                 </div>
+
+                {/* Inline mini-form for "+ Link new ingredient" */}
+                {isAddingHere && (
+                  <div
+                    data-testid={`add-link-form-${idx + 1}`}
+                    className="rounded border border-dashed border-[var(--border-default)] p-[var(--space-2)] space-y-[var(--space-2)]"
+                  >
+                    <div>
+                      <label
+                        htmlFor={`add-new-ing-${line.key}`}
+                        className="text-meta text-[var(--text-secondary)] block mb-0.5"
+                      >
+                        Ingredient
+                      </label>
+                      <select
+                        id={`add-new-ing-${line.key}`}
+                        aria-label={`New ingredient line ${idx + 1}`}
+                        value={addNewIngredientId}
+                        onChange={(e) => setAddNewIngredientId(e.target.value)}
+                        className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+                      >
+                        <option value="">Choose…</option>
+                        {ingredientsAvailableToLink.map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-[var(--space-2)]">
+                      <div>
+                        <label
+                          htmlFor={`add-new-price-${line.key}`}
+                          className="text-meta text-[var(--text-secondary)] block mb-0.5"
+                        >
+                          Price (RM)
+                        </label>
+                        <input
+                          id={`add-new-price-${line.key}`}
+                          aria-label={`New ingredient price line ${idx + 1}`}
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={addNewPriceRM}
+                          onChange={(e) => setAddNewPriceRM(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`add-new-unit-${line.key}`}
+                          className="text-meta text-[var(--text-secondary)] block mb-0.5"
+                        >
+                          Unit
+                        </label>
+                        <UnitPicker
+                          id={`add-new-unit-${line.key}`}
+                          value={addNewUnit}
+                          onChange={setAddNewUnit}
+                          enabledUnits={enabledUnits}
+                          ariaLabel={`New ingredient unit line ${idx + 1}`}
+                          className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-[var(--space-2)]">
+                      <button
+                        type="button"
+                        onClick={closeAddNew}
+                        aria-label={`Cancel link new ingredient line ${idx + 1}`}
+                        className="rounded-lg border border-[var(--border-default)] px-3 py-1 text-meta"
+                      >
+                        <X size={14} className="inline" /> Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveAddNew}
+                        disabled={!canSaveAddNew || addNewSubmitting}
+                        aria-label={`Save new ingredient line ${idx + 1}`}
+                        className="rounded-lg bg-[var(--color-info)] px-3 py-1 text-meta font-medium text-white disabled:opacity-50"
+                      >
+                        <Check size={14} className="inline" /> Save
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-[var(--space-2)]">
                   <div>
@@ -379,12 +641,11 @@ export function PurchasesForm({ initialSuppliers }: Props) {
                     <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
                       Unit
                     </label>
-                    <input
-                      type="text"
-                      aria-label={`Unit line ${idx + 1}`}
+                    <UnitPicker
                       value={line.unit}
-                      onChange={(e) => handleUnitChange(line.key, e.target.value)}
-                      placeholder="kg"
+                      onChange={(v) => handleUnitChange(line.key, v)}
+                      enabledUnits={enabledUnits}
+                      ariaLabel={`Unit line ${idx + 1}`}
                       className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-body"
                     />
                   </div>
@@ -439,7 +700,7 @@ export function PurchasesForm({ initialSuppliers }: Props) {
       )}
 
       {/* Submit */}
-      {supplierId && !supplierHasNoLinkedIngredients && (
+      {supplierId && (!supplierHasNoLinkedIngredients || showEmptyStateWithAdd) && (
         <div className="flex justify-end">
           <button
             type="button"

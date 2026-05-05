@@ -85,7 +85,7 @@ export function IngredientReview({
     if (!newName.trim() || !newUnit.trim()) return;
 
     startTransition(async () => {
-      const result = await addIngredient(newName.trim(), newUnit.trim());
+      const result = await addIngredient(newName.trim(), newUnit.trim(), "Unassigned");
       if (result.success) {
         setIngredients((prev) => [
           ...prev,

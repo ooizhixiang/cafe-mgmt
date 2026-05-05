@@ -1,10 +1,13 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { logError } from "@/lib/log-error";
 import { getTemplateById } from "@/lib/template-data";
+import { validateEnabledUnitsList } from "@/lib/units";
+import { dimensionOf } from "@/lib/unit-conversion";
 import type { ActionResult } from "@/types";
 
 const selectTemplateSchema = z.object({
@@ -72,6 +75,7 @@ export async function selectTemplate(
           data: newIngredients.map((ing, idx) => ({
             name: ing.name,
             unit: ing.unit,
+            category: "Unassigned",
             displayOrder: existingIngredients.length + idx,
             cafeId,
           })),
@@ -201,16 +205,39 @@ export async function updateIngredient(
 
     const ingredient = await prisma.ingredient.findUnique({
       where: { id },
-      select: { cafeId: true },
+      select: { cafeId: true, unit: true, displayUnit: true },
     });
 
     if (!ingredient || ingredient.cafeId !== cafeId) {
       return { success: false, error: "Ingredient not found" };
     }
 
+    // If the new unit is in a different dimension than the existing displayUnit,
+    // clear displayUnit so it doesn't get stuck as a stale orphan referencing
+    // an incompatible dimension. Otherwise the inventory page renders a forever
+    // "(check display unit)" hint that the manager has no obvious way to clear.
+    let nextDisplayUnit: string | null | undefined = undefined;
+    if (
+      ingredient.displayUnit !== null &&
+      parsed.data.unit !== ingredient.unit
+    ) {
+      const oldDim = dimensionOf(ingredient.unit);
+      const newDim = dimensionOf(parsed.data.unit);
+      const targetDim = dimensionOf(ingredient.displayUnit);
+      // Clear when the unit's dimension changed OR when the new unit can no
+      // longer host the existing displayUnit.
+      if (newDim !== oldDim || newDim !== targetDim) {
+        nextDisplayUnit = null;
+      }
+    }
+
     await prisma.ingredient.update({
       where: { id },
-      data: { name: parsed.data.name, unit: parsed.data.unit },
+      data: {
+        name: parsed.data.name,
+        unit: parsed.data.unit,
+        ...(nextDisplayUnit !== undefined ? { displayUnit: nextDisplayUnit } : {}),
+      },
     });
 
     return { success: true, data: undefined };
@@ -271,17 +298,19 @@ export async function deleteIngredient(
 const addIngredientSchema = z.object({
   name: z.string().min(1, "Name is required"),
   unit: z.string().min(1, "Unit is required"),
+  category: z.string().trim().min(1, "Category required"),
 });
 
 export async function addIngredient(
   name: string,
-  unit: string
+  unit: string,
+  category: string
 ): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await requireRole("MANAGER");
     const cafeId = session.user.cafeId;
 
-    const parsed = addIngredientSchema.safeParse({ name, unit });
+    const parsed = addIngredientSchema.safeParse({ name, unit, category });
     if (!parsed.success) {
       return { success: false, error: parsed.error.issues[0].message };
     }
@@ -297,6 +326,7 @@ export async function addIngredient(
       data: {
         name: parsed.data.name,
         unit: parsed.data.unit,
+        category: parsed.data.category,
         displayOrder: (maxOrder?.displayOrder ?? -1) + 1,
         cafeId,
       },
@@ -322,13 +352,13 @@ export async function addIngredient(
 const addIngredientSupplierSchema = z.object({
   ingredientId: z.string().min(1),
   supplierId: z.string().min(1),
-  priceInCents: z.number().int().min(0),
+  priceInCents: z.number().min(0),
   unit: z.string().min(1).max(20),
 });
 
 const updateIngredientSupplierSchema = z.object({
   id: z.string().min(1),
-  priceInCents: z.number().int().min(0),
+  priceInCents: z.number().min(0),
   unit: z.string().min(1).max(20),
 });
 
@@ -559,6 +589,88 @@ export async function reorderIngredient(
     const message =
       error instanceof Error ? error.message : "Failed to reorder ingredient";
     await logError({ context: "reorderIngredient", message });
+    return {
+      success: false,
+      error: "Something went wrong. Please try again.",
+    };
+  }
+}
+
+// ─── Cafe enabled units (settings → unit picker vocabulary) ───
+
+export async function setCafeEnabledUnits(
+  units: string[]
+): Promise<ActionResult<{ enabledUnits: string[] }>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const validation = validateEnabledUnitsList(units);
+    if (!validation.ok) {
+      return { success: false, error: validation.error };
+    }
+    const updated = await prisma.cafe.update({
+      where: { id: session.user.cafeId },
+      data: { enabledUnits: validation.cleaned },
+      select: { enabledUnits: true },
+    });
+    // Every page that pickers units loads `cafe.enabledUnits` server-side,
+    // so without revalidation a manager who toggles a unit and switches tabs
+    // would see the stale picker until full navigation. Revalidate each
+    // affected route so the next request re-renders with fresh data.
+    revalidatePath("/settings");
+    revalidatePath("/purchases");
+    revalidatePath("/ingredients");
+    revalidatePath("/inventory");
+    revalidatePath("/suppliers");
+    revalidatePath("/suppliers/[id]", "page");
+    return { success: true, data: { enabledUnits: updated.enabledUnits } };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to update enabled units";
+    await logError({ context: "setCafeEnabledUnits", message });
+    return {
+      success: false,
+      error: "Something went wrong. Please try again.",
+    };
+  }
+}
+
+const setMinMarginPercentSchema = z.number().int().min(0).max(99);
+
+export async function setMinMarginPercent(
+  value: number
+): Promise<ActionResult<{ minMarginPercent: number }>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const parsed = setMinMarginPercentSchema.safeParse(value);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: "Margin floor must be a whole number from 0 to 99",
+      };
+    }
+    const updated = await prisma.cafe.update({
+      where: { id: session.user.cafeId },
+      data: { minMarginPercent: parsed.data },
+      select: { minMarginPercent: true },
+    });
+    // The action feed (rendered at "/") and the settings page both surface
+    // the floor; revalidate so the next nav re-evaluates margin alerts.
+    revalidatePath("/settings");
+    revalidatePath("/");
+    return {
+      success: true,
+      data: { minMarginPercent: updated.minMarginPercent },
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to update margin floor";
+    await logError({ context: "setMinMarginPercent", message });
     return {
       success: false,
       error: "Something went wrong. Please try again.",

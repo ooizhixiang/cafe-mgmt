@@ -5,6 +5,7 @@ import { getAlertCards } from "./alert-cards";
 import { getCompWarningCards } from "./comp-warning-cards";
 import { getSupplierReminderCards } from "./supplier-reminder-cards";
 import { getSinceLastVisitCard } from "./since-last-visit";
+import { getMarginAlertCards } from "./margin-alert-cards";
 import { getCurrentPeriod, type TimeBoundaries } from "@/lib/period-detection";
 import type { FeedResponse, FeedCard, FeedSummary, FeedBadges } from "@/types/feed";
 import type { Role } from "@/generated/prisma/enums";
@@ -51,6 +52,7 @@ export async function getFeedData(
     getCompWarningCards(cafeId, cafe.timezone),
     getSupplierReminderCards(cafeId, cafe.timezone),
     getSinceLastVisitCard(cafeId, userId),
+    getMarginAlertCards(cafeId),
   ]);
 
   const allCards: FeedCard[] = [];

@@ -49,26 +49,26 @@ test.describe("Full Smoke Test", () => {
     await page.goto("/settings");
     await expect(page.locator("h1")).toBeVisible({ timeout: 10000 });
 
-    // ─── 4. Add ingredients ─────────────────────────────────
-    await page.goto("/settings/ingredients");
+    // ─── 4. Add ingredients via the spreadsheet ─────────────
+    await page.goto("/ingredients");
     await page.waitForTimeout(2000);
 
-    await page.getByText("Add ingredient").click();
-    await page.fill('input[placeholder="Name"]', "Coffee Beans");
-    await page.fill('input[placeholder="Unit (e.g. lbs, oz, bags)"]', "gm");
-    await page.locator("button.text-\\[var\\(--color-success\\)\\]").first().click();
+    await page.getByLabel("New ingredient name").fill("Coffee Beans");
+    await page.getByLabel("New ingredient unit").fill("gm");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
+    // Wait for previous add to clear the name input before next fill
+    await expect(page.getByLabel("New ingredient name")).toHaveValue("");
 
-    await page.getByText("Add ingredient").click();
-    await page.fill('input[placeholder="Name"]', "Milk");
-    await page.fill('input[placeholder="Unit (e.g. lbs, oz, bags)"]', "ml");
-    await page.locator("button.text-\\[var\\(--color-success\\)\\]").first().click();
+    await page.getByLabel("New ingredient name").fill("Milk");
+    await page.getByLabel("New ingredient unit").fill("ml");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
+    await expect(page.getByLabel("New ingredient name")).toHaveValue("");
 
-    await page.getByText("Add ingredient").click();
-    await page.fill('input[placeholder="Name"]', "Sugar");
-    await page.fill('input[placeholder="Unit (e.g. lbs, oz, bags)"]', "gm");
-    await page.locator("button.text-\\[var\\(--color-success\\)\\]").first().click();
+    await page.getByLabel("New ingredient name").fill("Sugar");
+    await page.getByLabel("New ingredient unit").fill("gm");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
 
     // ─── 5. Create recipe with variation ────────────────────

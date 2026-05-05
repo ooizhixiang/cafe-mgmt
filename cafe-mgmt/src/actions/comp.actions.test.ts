@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
+import {
+  encodeOverDeductionError,
+  parseOverDeductionError,
+} from "@/lib/lot-consume";
 
 // Test Zod schemas and budget logic used in comp actions
 
@@ -7,6 +11,7 @@ const logCompSchema = z.object({
   ingredientId: z.string().min(1),
   quantity: z.number().int().min(1),
   reason: z.string().min(1, "Reason is required").max(200),
+  confirmOverDeduction: z.boolean().optional(),
 });
 
 const updateBudgetSchema = z.object({
@@ -128,6 +133,29 @@ describe("Week start calculation", () => {
     const start = getWeekStart(sat, 0); // Sunday
     expect(start.getDay()).toBe(0);
     expect(start.getDate()).toBe(8); // March 8
+  });
+});
+
+describe("Spec B2 — confirmOverDeduction schema + wire format", () => {
+  it("accepts confirmOverDeduction = true", () => {
+    const result = logCompSchema.safeParse({
+      ingredientId: "ing123",
+      quantity: 5,
+      reason: "Customer service",
+      confirmOverDeduction: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("encodes + parses OVER_DEDUCTION payload", () => {
+    const wire = encodeOverDeductionError({
+      availableQty: 0,
+      requestedQty: 3,
+    });
+    expect(parseOverDeductionError(wire)).toEqual({
+      availableQty: 0,
+      requestedQty: 3,
+    });
   });
 });
 

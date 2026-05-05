@@ -26,6 +26,8 @@ import {
   addVariationStep,
   deleteVariationStep,
   updateVariationStep,
+  setRecipeYield,
+  getSubRecipeOptions,
 } from "@/actions/recipe.actions";
 import { updateIngredientConfig } from "@/actions/inventory.actions";
 import type { ActionResult } from "@/types";
@@ -38,6 +40,9 @@ interface RecipeSummary {
   description: string | null;
   ingredientCount: number;
   costPerServingInCents: number | null;
+  // Present only when the recipe has variations whose costs differ. Single-cost
+  // recipes (no variations, or all variations same cost) use the field above.
+  costPerServingRangeInCents: { minInCents: number; maxInCents: number } | null;
   category: string | null;
   discontinued: boolean;
 }
@@ -125,11 +130,16 @@ export function RecipeEditor({
             {r.ingredientCount} ingredients
           </span>
         </div>
-        {r.costPerServingInCents !== null && (
+        {r.costPerServingRangeInCents !== null ? (
+          <p className="text-meta text-[var(--text-secondary)] mt-[var(--space-1)] whitespace-nowrap">
+            Cost/serving: {formatCents(r.costPerServingRangeInCents.minInCents)}
+            –{formatCents(r.costPerServingRangeInCents.maxInCents)}
+          </p>
+        ) : r.costPerServingInCents !== null ? (
           <p className="text-meta text-[var(--text-secondary)] mt-[var(--space-1)]">
             Cost/serving: {formatCents(r.costPerServingInCents)}
           </p>
-        )}
+        ) : null}
       </button>
     );
   }
@@ -445,9 +455,73 @@ function RecipeDetail({
     });
   }
 
+  // Phase 2: sub-recipe picker (composite ingredient row).
+  const [pickerMode, setPickerMode] = useState<"ingredient" | "subRecipe">(
+    "ingredient"
+  );
+  const [addSubId, setAddSubId] = useState("");
+  const [addSubQty, setAddSubQty] = useState(1);
+  type SubRecipeOption = {
+    id: string;
+    name: string;
+    yieldQuantity: number;
+    yieldUnit: string;
+  };
+  const [subRecipeOptions, setSubRecipeOptions] = useState<SubRecipeOption[]>([]);
+
+  // Load sub-recipe options whenever the picker opens in sub-recipe mode.
+  // Cheap: one query per cafe; the dropdown is small.
+  useEffect(() => {
+    if (!showAddIngredient || pickerMode !== "subRecipe") return;
+    let cancelled = false;
+    getSubRecipeOptions(recipeId).then((r) => {
+      if (cancelled) return;
+      if (r.success) setSubRecipeOptions(r.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showAddIngredient, pickerMode, recipeId]);
+
+  function handleAddSubRecipe() {
+    if (!addSubId) return;
+    startTransition(async () => {
+      const result = await addRecipeIngredient({
+        recipeId,
+        subRecipeId: addSubId,
+        quantityPerServing: addSubQty,
+      });
+      if (!result.success) {
+        toast(result.error);
+        return;
+      }
+      setShowAddIngredient(false);
+      setPickerMode("ingredient");
+      setAddSubId("");
+      setAddSubQty(1);
+      loadRecipe();
+    });
+  }
+
   function handleRemoveIngredient(id: string) {
     startTransition(async () => {
       await removeRecipeIngredient(id);
+      loadRecipe();
+    });
+  }
+
+  // Phase 2: yield setter.
+  function handleSetYield(yieldQuantity: number | null, yieldUnit: string | null) {
+    startTransition(async () => {
+      const result = await setRecipeYield({
+        recipeId,
+        yieldQuantity,
+        yieldUnit,
+      });
+      if (!result.success) {
+        toast(result.error);
+        return;
+      }
       loadRecipe();
     });
   }
@@ -589,6 +663,36 @@ function RecipeDetail({
             loadRecipe();
           });
         }}
+      />
+
+      {/* Phase 2: yield (use as sub-recipe) + composite-row management.
+          Rendered as a single card here, OUTSIDE VariationsSection, so the
+          existing variation rendering stays unchanged. */}
+      <SubRecipesPanel
+        yieldQuantity={recipe.yieldQuantity}
+        yieldUnit={recipe.yieldUnit}
+        subRecipeRows={recipe.subRecipeRows}
+        isManager={isManager}
+        isPending={isPending}
+        onSetYield={handleSetYield}
+        showAdd={showAddIngredient && pickerMode === "subRecipe"}
+        onOpenAdd={() => {
+          setShowAddIngredient(true);
+          setPickerMode("subRecipe");
+        }}
+        onCloseAdd={() => {
+          setShowAddIngredient(false);
+          setPickerMode("ingredient");
+          setAddSubId("");
+          setAddSubQty(1);
+        }}
+        addSubId={addSubId}
+        setAddSubId={setAddSubId}
+        addSubQty={addSubQty}
+        setAddSubQty={setAddSubQty}
+        subRecipeOptions={subRecipeOptions}
+        onAddSubRecipe={handleAddSubRecipe}
+        onRemove={handleRemoveIngredient}
       />
 
       {/* All variations as containers (base "Original" + named variations) */}
@@ -1057,7 +1161,11 @@ function CostRow({
   const overrideAction = subtotalOverrideAction ?? updateSubtotalOverride;
 
   function handleSaveCost() {
-    const cents = costInput ? Math.round(parseFloat(costInput) * 100) : null;
+    const cents = costInput ? parseFloat(costInput) * 100 : null;
+    if (cents !== null && !Number.isFinite(cents)) {
+      toast("Invalid cost");
+      return;
+    }
     startTransition(async () => {
       const result = await updateIngredientConfig({
         id: ingredientId,
@@ -1072,7 +1180,11 @@ function CostRow({
   }
 
   function handleSaveSubtotal() {
-    const cents = subtotalInput ? Math.round(parseFloat(subtotalInput) * 100) : null;
+    const cents = subtotalInput ? parseFloat(subtotalInput) * 100 : null;
+    if (cents !== null && !Number.isFinite(cents)) {
+      toast("Invalid cost");
+      return;
+    }
     startTransition(async () => {
       const result = await overrideAction(recipeIngredientId, cents);
       if (!result.success) { toast(result.error); return; }
@@ -1110,7 +1222,7 @@ function CostRow({
           <button
             onClick={() => {
               if (!isManager) return;
-              setCostInput(costPerUnitInCents !== null ? (costPerUnitInCents / 100).toFixed(2) : "");
+              setCostInput(costPerUnitInCents !== null ? (Math.floor(costPerUnitInCents) / 100).toFixed(2) : "");
               setEditingCost(true);
             }}
             className={isManager ? "hover:underline cursor-pointer" : ""}
@@ -1143,7 +1255,7 @@ function CostRow({
           <button
             onClick={() => {
               if (!isManager) return;
-              setSubtotalInput(displaySubtotal !== null ? (displaySubtotal / 100).toFixed(2) : "");
+              setSubtotalInput(displaySubtotal !== null ? (Math.floor(displaySubtotal) / 100).toFixed(2) : "");
               setEditingSubtotal(true);
             }}
             className={isManager ? "hover:underline cursor-pointer" : ""}
@@ -1419,5 +1531,308 @@ function SellingPriceEditor({
     >
       Selling Price: {priceInCents ? `RM ${(priceInCents / 100).toFixed(2)}` : "Not set (click to set)"}
     </button>
+  );
+}
+
+// ─── Phase 2: Sub-recipes panel ──────────────────────────────
+
+interface SubRecipeRow {
+  id: string;
+  subRecipeId: string;
+  subRecipeName: string;
+  subRecipeYieldQuantity: number;
+  subRecipeYieldUnit: string;
+  quantityPerServing: number;
+  subtotalOverrideInCents: number | null;
+}
+
+function SubRecipesPanel({
+  yieldQuantity,
+  yieldUnit,
+  subRecipeRows,
+  isManager,
+  isPending,
+  onSetYield,
+  showAdd,
+  onOpenAdd,
+  onCloseAdd,
+  addSubId,
+  setAddSubId,
+  addSubQty,
+  setAddSubQty,
+  subRecipeOptions,
+  onAddSubRecipe,
+  onRemove,
+}: {
+  yieldQuantity: number | null;
+  yieldUnit: string | null;
+  subRecipeRows: SubRecipeRow[];
+  isManager: boolean;
+  isPending: boolean;
+  onSetYield: (qty: number | null, unit: string | null) => void;
+  showAdd: boolean;
+  onOpenAdd: () => void;
+  onCloseAdd: () => void;
+  addSubId: string;
+  setAddSubId: (v: string) => void;
+  addSubQty: number;
+  setAddSubQty: (v: number) => void;
+  subRecipeOptions: Array<{
+    id: string;
+    name: string;
+    yieldQuantity: number;
+    yieldUnit: string;
+  }>;
+  onAddSubRecipe: () => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-[var(--border-default)] p-[var(--space-4)] space-y-[var(--space-3)]">
+      <YieldEditor
+        yieldQuantity={yieldQuantity}
+        yieldUnit={yieldUnit}
+        isManager={isManager}
+        isPending={isPending}
+        onSave={onSetYield}
+      />
+
+      <div>
+        <p className="text-meta font-semibold text-[var(--text-secondary)] mb-[var(--space-2)]">
+          Sub-recipes used
+        </p>
+        {subRecipeRows.length === 0 ? (
+          <p className="text-meta text-[var(--text-secondary)]">
+            None — this recipe uses raw ingredients only.
+          </p>
+        ) : (
+          <ul className="space-y-[var(--space-1)]">
+            {subRecipeRows.map((row) => (
+              <li
+                key={row.id}
+                className="flex items-center justify-between text-meta border-l-2 border-[var(--border-default)] pl-[var(--space-3)] py-1"
+              >
+                <span>
+                  📋 {row.subRecipeName} — {row.quantityPerServing}{" "}
+                  {row.subRecipeYieldUnit}
+                </span>
+                {isManager && (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(row.id)}
+                    disabled={isPending}
+                    aria-label={`Remove sub-recipe ${row.subRecipeName}`}
+                    className="text-meta text-[var(--color-urgent)] disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {isManager && !showAdd && (
+        <button
+          type="button"
+          onClick={onOpenAdd}
+          className="text-meta text-[var(--color-info)] font-medium"
+        >
+          + Add sub-recipe
+        </button>
+      )}
+
+      {isManager && showAdd && (
+        <div className="rounded border border-dashed border-[var(--border-default)] p-[var(--space-3)] space-y-[var(--space-2)]">
+          {subRecipeOptions.length === 0 ? (
+            <p className="text-meta text-[var(--text-secondary)]">
+              No other recipes have a yield set yet. Set a yield on another
+              recipe first to make it usable as a sub-recipe.
+            </p>
+          ) : (
+            <>
+              <div>
+                <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
+                  Sub-recipe
+                </label>
+                <select
+                  aria-label="Sub-recipe"
+                  value={addSubId}
+                  onChange={(e) => setAddSubId(e.target.value)}
+                  className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+                >
+                  <option value="">Choose…</option>
+                  {subRecipeOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name} (yields {o.yieldQuantity} {o.yieldUnit})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
+                  Quantity per serving (in the sub-recipe&apos;s unit)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  aria-label="Sub-recipe quantity per serving"
+                  value={addSubQty}
+                  onChange={(e) => setAddSubQty(Number(e.target.value) || 1)}
+                  className="w-24 rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+                />
+              </div>
+            </>
+          )}
+          <div className="flex justify-end gap-[var(--space-2)]">
+            <button
+              type="button"
+              onClick={onCloseAdd}
+              className="text-meta text-[var(--text-secondary)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onAddSubRecipe}
+              disabled={isPending || !addSubId || addSubQty <= 0}
+              className="rounded-lg bg-[var(--color-info)] px-3 py-1 text-meta font-medium text-white disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function YieldEditor({
+  yieldQuantity,
+  yieldUnit,
+  isManager,
+  isPending,
+  onSave,
+}: {
+  yieldQuantity: number | null;
+  yieldUnit: string | null;
+  isManager: boolean;
+  isPending: boolean;
+  onSave: (qty: number | null, unit: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [qty, setQty] = useState<string>(yieldQuantity ? String(yieldQuantity) : "");
+  const [unit, setUnit] = useState<string>(yieldUnit ?? "");
+
+  // Re-sync local form state whenever the parent's prop changes (after a
+  // successful save the parent re-fetches and the new values flow in here).
+  useEffect(() => {
+    setQty(yieldQuantity ? String(yieldQuantity) : "");
+    setUnit(yieldUnit ?? "");
+  }, [yieldQuantity, yieldUnit]);
+
+  const isSet = yieldQuantity !== null && yieldUnit !== null;
+
+  if (!editing) {
+    return (
+      <div className="flex items-center justify-between gap-[var(--space-2)]">
+        <div>
+          <p className="text-meta font-semibold text-[var(--text-secondary)]">
+            Yield (use as sub-recipe)
+          </p>
+          <p className="text-body">
+            {isSet ? `${yieldQuantity} ${yieldUnit}` : "Not set"}
+          </p>
+        </div>
+        {isManager && (
+          <div className="flex gap-[var(--space-2)]">
+            {isSet && (
+              <button
+                type="button"
+                onClick={() => onSave(null, null)}
+                disabled={isPending}
+                className="text-meta text-[var(--color-urgent)] disabled:opacity-50"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-meta text-[var(--color-info)] font-medium"
+            >
+              {isSet ? "Edit" : "Set"}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-[var(--space-2)]">
+      <p className="text-meta font-semibold text-[var(--text-secondary)]">
+        Yield (use as sub-recipe)
+      </p>
+      <div className="flex items-end gap-[var(--space-2)]">
+        <div>
+          <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
+            Quantity
+          </label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            aria-label="Yield quantity"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            className="w-24 rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+          />
+        </div>
+        <div>
+          <label className="text-meta text-[var(--text-secondary)] block mb-0.5">
+            Unit
+          </label>
+          <input
+            type="text"
+            maxLength={20}
+            aria-label="Yield unit"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            placeholder="e.g. mL"
+            className="w-24 rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(false);
+            // Reset to the props.
+            setQty(yieldQuantity ? String(yieldQuantity) : "");
+            setUnit(yieldUnit ?? "");
+          }}
+          className="text-meta text-[var(--text-secondary)]"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const parsed = Number(qty);
+            const trimmed = unit.trim();
+            if (!Number.isInteger(parsed) || parsed < 1 || trimmed.length === 0) {
+              return;
+            }
+            onSave(parsed, trimmed);
+            setEditing(false);
+          }}
+          disabled={isPending}
+          className="rounded-lg bg-[var(--color-info)] px-3 py-1 text-meta font-medium text-white disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+    </div>
   );
 }

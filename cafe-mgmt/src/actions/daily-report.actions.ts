@@ -5,6 +5,12 @@ import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { getCafeNow } from "@/lib/format";
 import { checkThresholds } from "@/lib/threshold-check";
+import { applyConsumeFifo } from "@/lib/lot-consume";
+import { currentCostPerUnit } from "@/lib/fifo";
+import {
+  expandRecipeToLeaves,
+  type ExpandRecipeInput,
+} from "@/lib/recipe-expand";
 import type { ActionResult } from "@/types";
 
 const submitReportSchema = z.object({
@@ -81,21 +87,35 @@ export async function getRecipesForReport(): Promise<
         id: r.id,
         name: r.name,
         imageUrl: r.imageUrl,
-        ingredients: r.ingredients.map((ri) => ({
-          ingredientId: ri.ingredientId,
-          ingredientName: ri.ingredient.name,
-          unit: ri.ingredient.unit,
-          quantityPerServing: ri.quantityPerServing,
-        })),
+        // Filter out composite (sub-recipe) rows here — this projection feeds
+        // the sale-entry UI, which only cares about leaf raw ingredients for
+        // its display. Sub-recipe expansion happens at deduction time in
+        // submitDailyReport via expandRecipeToLeaves.
+        ingredients: r.ingredients
+          .filter(
+            (ri): ri is typeof ri & { ingredientId: string; ingredient: NonNullable<typeof ri.ingredient> } =>
+              ri.ingredientId !== null && ri.ingredient !== null
+          )
+          .map((ri) => ({
+            ingredientId: ri.ingredientId,
+            ingredientName: ri.ingredient.name,
+            unit: ri.ingredient.unit,
+            quantityPerServing: ri.quantityPerServing,
+          })),
         variations: r.variations.map((v) => ({
           id: v.id,
           name: v.name,
-          ingredients: v.ingredients.map((vi) => ({
-            ingredientId: vi.ingredientId,
-            ingredientName: vi.ingredient.name,
-            unit: vi.ingredient.unit,
-            quantityPerServing: vi.quantityPerServing,
-          })),
+          ingredients: v.ingredients
+            .filter(
+              (vi): vi is typeof vi & { ingredientId: string; ingredient: NonNullable<typeof vi.ingredient> } =>
+                vi.ingredientId !== null && vi.ingredient !== null
+            )
+            .map((vi) => ({
+              ingredientId: vi.ingredientId,
+              ingredientName: vi.ingredient.name,
+              unit: vi.ingredient.unit,
+              quantityPerServing: vi.quantityPerServing,
+            })),
         })),
       })),
     };
@@ -148,46 +168,98 @@ export async function submitDailyReport(
       },
     });
 
+    // Cafe-wide recipe registry for sub-recipe expansion. Includes EVERY
+    // recipe in the cafe so the engine can walk through nested composites.
+    // (The active `recipes` set above only includes recipes being SOLD; their
+    // sub-recipes may be other recipes the engine needs to read.)
+    const allRecipes = await prisma.recipe.findMany({
+      where: { cafeId },
+      select: {
+        id: true,
+        yieldQuantity: true,
+        yieldUnit: true,
+        ingredients: {
+          select: {
+            ingredientId: true,
+            subRecipeId: true,
+            quantityPerServing: true,
+          },
+        },
+      },
+    });
+    const recipeRegistry: Map<string, ExpandRecipeInput> = new Map(
+      allRecipes.map((r) => [r.id, r])
+    );
+
+    // Pre-load every ingredient in the cafe so we can attach name/unit/cost
+    // metadata to leaf deductions surfaced by sub-recipe expansion (those
+    // ingredients aren't necessarily in the active recipes' direct joins).
+    const cafeIngredients = await prisma.ingredient.findMany({
+      where: { cafeId },
+      select: { id: true, name: true, unit: true, costPerUnitInCents: true },
+    });
+    const ingredientLookup = new Map(cafeIngredients.map((i) => [i.id, i]));
+
     // Calculate total deductions per ingredient
     const deductionMap = new Map<string, { name: string; unit: string; total: number; costPerUnit: number | null }>();
+
+    function addLeafDeduction(ingredientId: string, qty: number) {
+      if (qty <= 0) return;
+      const meta = ingredientLookup.get(ingredientId);
+      if (!meta) return; // ingredient deleted or cross-cafe; skip silently
+      const existing = deductionMap.get(ingredientId);
+      if (existing) {
+        existing.total += qty;
+      } else {
+        deductionMap.set(ingredientId, {
+          name: meta.name,
+          unit: meta.unit,
+          total: qty,
+          costPerUnit:
+            meta.costPerUnitInCents === null
+              ? null
+              : meta.costPerUnitInCents.toNumber(),
+        });
+      }
+    }
 
     for (const entry of entries) {
       const recipe = recipes.find((r) => r.id === entry.recipeId);
       if (!recipe) continue;
 
-      // Base recipe ingredients
-      for (const ri of recipe.ingredients) {
-        const deduction = ri.quantityPerServing * entry.qtySold;
-        const existing = deductionMap.get(ri.ingredientId);
-        if (existing) {
-          existing.total += deduction;
-        } else {
-          deductionMap.set(ri.ingredientId, {
-            name: ri.ingredient.name,
-            unit: ri.ingredient.unit,
-            total: deduction,
-            costPerUnit: ri.ingredient.costPerUnitInCents,
-          });
+      // Base recipe ingredients — expand sub-recipes via the engine. For raw
+      // rows the engine returns leaf qty = quantityPerServing × scale; for
+      // composite rows it walks down to leaves.
+      // Engine throws on runtime cycles (defensive — action layer rejects
+      // inserts that would create them, but a manual SQL or cycle race could
+      // bypass that). Catch + log to avoid breaking the entire sale submission
+      // for the cafe; the affected entry's leaves are skipped.
+      try {
+        const baseLeaves = expandRecipeToLeaves(
+          entry.recipeId,
+          recipeRegistry,
+          entry.qtySold
+        );
+        for (const [leafId, qty] of baseLeaves) {
+          addLeafDeduction(leafId, qty);
         }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Expansion failed";
+        console.error(
+          `[submitDailyReport] expansion error on recipe ${entry.recipeId}: ${message}`
+        );
       }
 
-      // Variation-specific ingredients
+      // Variation-specific ingredients — Phase 1 forbids composites here, so
+      // the existing per-row loop is correct (raw only). When variation
+      // composites are added, route through the engine the same way.
       if (entry.variationId) {
         const variation = recipe.variations.find((v) => v.id === entry.variationId);
         if (variation) {
           for (const vi of variation.ingredients) {
+            if (vi.ingredientId === null) continue; // defensive: future composite row
             const deduction = vi.quantityPerServing * entry.qtySold;
-            const existing = deductionMap.get(vi.ingredientId);
-            if (existing) {
-              existing.total += deduction;
-            } else {
-              deductionMap.set(vi.ingredientId, {
-                name: vi.ingredient.name,
-                unit: vi.ingredient.unit,
-                total: deduction,
-                costPerUnit: vi.ingredient.costPerUnitInCents,
-              });
-            }
+            addLeafDeduction(vi.ingredientId, deduction);
           }
         }
       }
@@ -202,35 +274,217 @@ export async function submitDailyReport(
     const today = getCafeNow(cafe.timezone);
     today.setHours(0, 0, 0, 0);
 
+    // Derived per-unit cost per ingredient — drives InventoryCount.dollarValueInCents
+    // so the valuation matches what the inventory/recipe pages display.
+    // Falls back to the manual cost when no lots exist (or when manual override
+    // is enabled). One batched query, results stored in a Map for O(1) lookup.
+    const ingredientIdsForCost = Array.from(deductionMap.keys());
+    const derivedCostByIngredient = new Map<string, number | null>();
+    if (ingredientIdsForCost.length > 0) {
+      const [ingredientMeta, oldestLots] = await Promise.all([
+        prisma.ingredient.findMany({
+          where: { id: { in: ingredientIdsForCost }, cafeId },
+          select: {
+            id: true,
+            manualCostOverride: true,
+            costPerUnitInCents: true,
+          },
+        }),
+        prisma.ingredientPurchase.findMany({
+          where: {
+            cafeId,
+            remainingQuantity: { gt: 0 },
+            ingredientSupplier: { ingredientId: { in: ingredientIdsForCost } },
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: {
+            quantity: true,
+            totalPriceInCents: true,
+            ingredientSupplier: { select: { ingredientId: true } },
+          },
+        }),
+      ]);
+
+      const oldestLotByIngredient = new Map<
+        string,
+        { totalPriceInCents: number; quantity: number }
+      >();
+      for (const row of oldestLots) {
+        const id = row.ingredientSupplier.ingredientId;
+        if (!oldestLotByIngredient.has(id)) {
+          oldestLotByIngredient.set(id, {
+            totalPriceInCents: row.totalPriceInCents.toNumber(),
+            quantity: row.quantity,
+          });
+        }
+      }
+
+      for (const meta of ingredientMeta) {
+        const rawCost =
+          meta.costPerUnitInCents === null
+            ? null
+            : meta.costPerUnitInCents.toNumber();
+        const derived = currentCostPerUnit(
+          {
+            manualCostOverride: meta.manualCostOverride,
+            costPerUnitInCents: rawCost,
+          },
+          oldestLotByIngredient.get(meta.id) ?? null
+        );
+        derivedCostByIngredient.set(meta.id, derived);
+      }
+    }
+
     // Persist sales entries and deduct from inventory in a transaction
     const deductions: Array<{ name: string; unit: string; deducted: number; newStock: number | null }> = [];
 
-    await prisma.$transaction(async (tx) => {
-      // Save sales entries
+    // Idempotency sentinel — thrown inside the txn when a SalesEntry already
+    // exists for (cafeId, today). Without this guard a double-submit (network
+    // retry, manager resubmit) would create duplicate SalesEntry rows AND run
+    // applyConsumeFifo again, doubling lot decrements.
+    const ALREADY_SUBMITTED_THROW = "ALREADY_SUBMITTED_THROW";
+
+    try {
+      await prisma.$transaction(async (tx) => {
+      // Pre-flight inside the txn so the existence check shares the same
+      // snapshot as the writes below.
+      const existingSubmission = await tx.salesEntry.findFirst({
+        where: { cafeId, saleDate: today },
+        select: { id: true },
+      });
+      if (existingSubmission) {
+        throw new Error(ALREADY_SUBMITTED_THROW);
+      }
+
+      // Save sales entries — per-entry FIFO consume drives `costInCents`.
+      // Sales over-deduct silently (no confirm); the OVER_DEDUCTION row gets
+      // priced at the most-recent lot.
       for (const entry of entries) {
         const recipe = recipes.find((r) => r.id === entry.recipeId);
         if (!recipe) continue;
         const variation = entry.variationId
           ? recipe.variations.find((v) => v.id === entry.variationId)
           : null;
-        // Calculate cost per serving
-        const costPerServing = recipe.ingredients.reduce((sum, ri) => {
-          return sum + (ri.subtotalOverrideInCents ?? ri.quantityPerServing * (ri.ingredient.costPerUnitInCents ?? 0));
-        }, 0);
-        // Get selling price
-        const sellingPrice = variation?.sellingPriceInCents ?? recipe.sellingPriceInCents ?? 0;
+        const sellingPrice =
+          variation?.sellingPriceInCents ?? recipe.sellingPriceInCents ?? 0;
 
-        await tx.salesEntry.create({
+        // Create the SalesEntry first so we have its id to attribute consumes.
+        const salesEntry = await tx.salesEntry.create({
           data: {
             cafeId,
             recipeId: entry.recipeId,
             recipeName: variation ? `${recipe.name} (${variation.name})` : recipe.name,
             qtySold: entry.qtySold,
             revenueInCents: sellingPrice * entry.qtySold,
-            costInCents: costPerServing * entry.qtySold,
+            costInCents: 0,
             saleDate: today,
             createdById: userId,
           },
+        });
+
+        // Compute per-ingredient deduction for this single entry.
+        // overrides (recipeIngredient.subtotalOverrideInCents) bypass FIFO —
+        // they're fixed per-serving costs that ignore lot prices.
+        let entryCostInCents = 0;
+        for (const ri of recipe.ingredients) {
+          if (ri.ingredientId !== null) {
+            // Raw ingredient row — existing path.
+            const totalQty = ri.quantityPerServing * entry.qtySold;
+            if (ri.subtotalOverrideInCents !== null) {
+              entryCostInCents += ri.subtotalOverrideInCents.toNumber() * entry.qtySold;
+              await applyConsumeFifo(tx, {
+                cafeId,
+                ingredientId: ri.ingredientId,
+                requested: totalQty,
+                sourceType: "SALES",
+                sourceId: salesEntry.id,
+              });
+            } else {
+              const fifoResult = await applyConsumeFifo(tx, {
+                cafeId,
+                ingredientId: ri.ingredientId,
+                requested: totalQty,
+                sourceType: "SALES",
+                sourceId: salesEntry.id,
+              });
+              entryCostInCents += fifoResult.totalCostInCents;
+            }
+          } else if (ri.subRecipeId !== null) {
+            // Composite row — expand sub-recipe to leaves and consume each.
+            // The composite row's optional override applies at the row level
+            // (replaces summed leaf cost); the leaves still consume from FIFO.
+            // Engine throws on runtime cycles — catch defensively so a bad
+            // edge doesn't break the whole transaction; that one row's
+            // leaves are skipped. Cost remains 0 (or override) for that row.
+            const sub = recipeRegistry.get(ri.subRecipeId);
+            if (!sub || sub.yieldQuantity === null || sub.yieldQuantity <= 0) {
+              continue; // sub deleted or yield cleared — defensive skip
+            }
+            const subScale = (ri.quantityPerServing * entry.qtySold) / sub.yieldQuantity;
+            let rowFifoCost = 0;
+            try {
+              const leaves = expandRecipeToLeaves(
+                ri.subRecipeId,
+                recipeRegistry,
+                subScale
+              );
+              for (const [leafId, leafQty] of leaves) {
+                const fifoResult = await applyConsumeFifo(tx, {
+                  cafeId,
+                  ingredientId: leafId,
+                  requested: leafQty,
+                  sourceType: "SALES",
+                  sourceId: salesEntry.id,
+                });
+                rowFifoCost += fifoResult.totalCostInCents;
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Expansion failed";
+              console.error(
+                `[submitDailyReport] composite expansion error on row ${ri.id}: ${message}`
+              );
+            }
+            if (ri.subtotalOverrideInCents !== null) {
+              entryCostInCents += ri.subtotalOverrideInCents.toNumber() * entry.qtySold;
+            } else {
+              entryCostInCents += rowFifoCost;
+            }
+          }
+        }
+
+        if (variation) {
+          for (const vi of variation.ingredients) {
+            // Phase 1 forbids composites on variation ingredients; defend
+            // against malformed rows in case the future loosens this.
+            if (vi.ingredientId === null) continue;
+            const totalQty = vi.quantityPerServing * entry.qtySold;
+            const overrideCents = vi.subtotalOverrideInCents ?? null;
+            if (overrideCents !== null) {
+              entryCostInCents += overrideCents * entry.qtySold;
+              await applyConsumeFifo(tx, {
+                cafeId,
+                ingredientId: vi.ingredientId,
+                requested: totalQty,
+                sourceType: "SALES",
+                sourceId: salesEntry.id,
+              });
+            } else {
+              const fifoResult = await applyConsumeFifo(tx, {
+                cafeId,
+                ingredientId: vi.ingredientId,
+                requested: totalQty,
+                sourceType: "SALES",
+                sourceId: salesEntry.id,
+              });
+              entryCostInCents += fifoResult.totalCostInCents;
+            }
+          }
+        }
+
+        // Round at the Int boundary.
+        await tx.salesEntry.update({
+          where: { id: salesEntry.id },
+          data: { costInCents: Math.round(entryCostInCents) },
         });
       }
 
@@ -276,13 +530,18 @@ export async function submitDailyReport(
         const newQty = currentQty !== null ? Math.max(0, currentQty - info.total) : null;
 
         if (currentQty !== null) {
+          // Use the derived cost (oldest non-empty lot, or manual fallback)
+          // so InventoryCount.dollarValueInCents matches the per-unit cost
+          // shown on inventory/recipe pages. `info.costPerUnit` is the raw
+          // manual cost and diverged from the derived value when lots existed.
+          const derivedCost = derivedCostByIngredient.get(ingredientId) ?? null;
           await tx.inventoryCount.update({
             where: { ingredientId_countDate: { ingredientId, countDate: today } },
             data: {
               quantity: newQty!,
               confirmedById: userId,
               confirmedAt: new Date(),
-              dollarValueInCents: info.costPerUnit ? newQty! * info.costPerUnit : null,
+              dollarValueInCents: derivedCost ? Math.round(newQty! * derivedCost) : null,
             },
           });
         }
@@ -294,7 +553,13 @@ export async function submitDailyReport(
           newStock: newQty,
         });
       }
-    });
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === ALREADY_SUBMITTED_THROW) {
+        return { success: false, error: "ALREADY_SUBMITTED" };
+      }
+      throw e;
+    }
 
     // Check thresholds after deductions
     for (const [ingredientId] of deductionMap) {
@@ -388,6 +653,12 @@ export async function getSalesAnalysis(
       if (!recipe) continue;
 
       for (const ri of recipe.ingredients) {
+        // Skip composite rows in this raw-ingredient summary. Sub-recipe
+        // expansion in this view would require recursing through other
+        // recipes' ingredients — out of scope for this aggregation surface
+        // (it's a sales-summary, not the FIFO deduction). Composites are
+        // accounted for at deduction time via the engine.
+        if (ri.ingredientId === null || ri.ingredient === null) continue;
         const used = ri.quantityPerServing * entry.qtySold;
         const key = ri.ingredientId;
         const existing = ingredientMap.get(key);

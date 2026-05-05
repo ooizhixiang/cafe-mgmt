@@ -2,6 +2,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { InventoryList } from "@/components/inventory/inventory-list";
 import { getCafeNow } from "@/lib/format";
+import { currentCostPerUnit } from "@/lib/fifo";
 import Link from "next/link";
 
 export default async function InventoryPage() {
@@ -24,7 +25,7 @@ export default async function InventoryPage() {
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  const [ingredients, suppliers] = await Promise.all([
+  const [ingredients, suppliers, cafeForUnits] = await Promise.all([
     prisma.ingredient.findMany({
       where: { cafeId },
       orderBy: [{ isPinned: "desc" }, { displayOrder: "asc" }],
@@ -43,6 +44,10 @@ export default async function InventoryPage() {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
+    prisma.cafe.findUnique({
+      where: { id: cafeId },
+      select: { enabledUnits: true },
+    }),
   ]);
 
   if (ingredients.length === 0) {
@@ -55,7 +60,7 @@ export default async function InventoryPage() {
             Add ingredients to start tracking your inventory.
           </p>
           <Link
-            href="/settings/ingredients"
+            href="/ingredients"
             className="inline-block rounded-lg bg-[var(--color-info)] px-5 py-2.5 text-body font-medium text-white"
           >
             Add ingredients
@@ -85,6 +90,34 @@ export default async function InventoryPage() {
           },
         });
 
+  // Oldest non-empty lot per ingredient — drives the derived cost displayed
+  // when manualCostOverride is false. Tie-break on id ascending to match FIFO
+  // consume's `[createdAt asc, id asc]` ordering — otherwise lots created in
+  // the same millisecond could pick a different "oldest" here than the
+  // consume path.
+  const oldestLotByIngredient = new Map<
+    string,
+    { totalPriceInCents: number; quantity: number; createdAt: Date; id: string }
+  >();
+  for (const purchase of purchases) {
+    if (purchase.remainingQuantity <= 0) continue;
+    const ingId = purchase.ingredientSupplier.ingredientId;
+    const existing = oldestLotByIngredient.get(ingId);
+    const isOlder =
+      !existing ||
+      purchase.createdAt < existing.createdAt ||
+      (purchase.createdAt.getTime() === existing.createdAt.getTime() &&
+        purchase.id < existing.id);
+    if (isOlder) {
+      oldestLotByIngredient.set(ingId, {
+        totalPriceInCents: purchase.totalPriceInCents.toNumber(),
+        quantity: purchase.quantity,
+        createdAt: purchase.createdAt,
+        id: purchase.id,
+      });
+    }
+  }
+
   const mapped = ingredients.map((ing) => {
     const todayEntry = ing.inventoryCounts.find(
       (c) => c.countDate.toISOString().slice(0, 10) === today.toISOString().slice(0, 10)
@@ -93,22 +126,34 @@ export default async function InventoryPage() {
       (c) => c.countDate.toISOString().slice(0, 10) === yesterday.toISOString().slice(0, 10)
     );
 
+    const rawCost =
+      ing.costPerUnitInCents === null ? null : ing.costPerUnitInCents.toNumber();
+    const derivedCost = currentCostPerUnit(
+      {
+        manualCostOverride: ing.manualCostOverride,
+        costPerUnitInCents: rawCost,
+      },
+      oldestLotByIngredient.get(ing.id) ?? null
+    );
+
     return {
       id: ing.id,
       name: ing.name,
       unit: ing.unit,
+      displayUnit: ing.displayUnit,
       category: ing.category,
       isPinned: ing.isPinned,
       snapIncrement: ing.snapIncrement,
       containerProfile: ing.containerProfile,
-      costPerUnitInCents: ing.costPerUnitInCents,
+      costPerUnitInCents: rawCost,
+      derivedCostPerUnitInCents: derivedCost,
       unitsPerContainer: ing.unitsPerContainer,
       lowStockThreshold: ing.lowStockThreshold,
       ingredientSuppliers: ing.ingredientSuppliers.map((link) => ({
         id: link.id,
         supplierId: link.supplierId,
         supplierName: link.supplier.name,
-        priceInCents: link.priceInCents,
+        priceInCents: link.priceInCents.toNumber(),
         unit: link.unit,
       })),
       ingredientPurchases: purchases
@@ -118,8 +163,9 @@ export default async function InventoryPage() {
           ingredientSupplierId: p.ingredientSupplierId,
           supplierName: p.ingredientSupplier.supplier.name,
           quantity: p.quantity,
+          remainingQuantity: p.remainingQuantity,
           unit: p.unit,
-          totalPriceInCents: p.totalPriceInCents,
+          totalPriceInCents: p.totalPriceInCents.toNumber(),
           createdAt: p.createdAt.toISOString(),
         })),
       todayCount: todayEntry?.quantity ?? null,
@@ -136,6 +182,7 @@ export default async function InventoryPage() {
         initialIngredients={mapped}
         suppliers={suppliers}
         userRole={userRole}
+        enabledUnits={cafeForUnits?.enabledUnits ?? []}
       />
     </div>
   );

@@ -37,6 +37,12 @@ model Cafe {
   // Onboarding steps completed (Story 1.5)
   onboardingCompletedSteps String[] @default([])
 
+  // Cafe-managed unit picker vocabulary (cafe-enabled-units feature).
+  enabledUnits String[] @default(["kg", "g", "L", "mL", "each"])
+
+  // Minimum margin floor (%). Action feed warns about recipes priced below it.
+  minMarginPercent Int @default(20)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -57,6 +63,7 @@ model Cafe {
   grabAndGoItems     GrabAndGoItem[]
   ingredientSuppliers IngredientSupplier[]
   ingredientPurchases IngredientPurchase[]
+  lotConsumptions     LotConsumption[]
 }
 
 model User {
@@ -154,13 +161,18 @@ model Ingredient {
   id                 String   @id @default(cuid())
   name               String
   unit               String
+  // Optional display-time conversion target (within-dimension). Inventory
+  // surfaces convert stored quantities to this unit at render. Null = no
+  // conversion (parity with pre-feature behavior).
+  displayUnit        String?
   displayOrder       Int
   cafeId             String
-  costPerUnitInCents Int?
+  costPerUnitInCents Decimal? @db.Decimal(12, 4)
   snapIncrement      Int?
   containerProfile   String?
   category           String?
   isPinned           Boolean  @default(false)
+  manualCostOverride Boolean  @default(true)
   lowStockThreshold  Int?
   unitsPerContainer  Int?
   createdAt          DateTime @default(now())
@@ -276,6 +288,11 @@ enum WastageReason {
   SPILLED
   EXPIRED
   INCORRECT
+}
+
+enum ConsumptionKind {
+  LOT
+  OVER_DEDUCTION
 }
 
 model InventoryCount {
@@ -402,7 +419,7 @@ model IngredientSupplier {
   ingredientId String
   supplierId   String
   cafeId       String
-  priceInCents Int
+  priceInCents Decimal  @db.Decimal(12, 4)
   unit         String   @default("kg")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -421,9 +438,11 @@ model IngredientPurchase {
   ingredientSupplierId String
   cafeId               String
   quantity             Int
+  remainingQuantity    Int      @default(0)
   unit                 String
-  totalPriceInCents    Int
+  totalPriceInCents    Decimal  @db.Decimal(12, 4)
   supplierCallLogId    String?
+  invoiceImageUrl      String?
   createdById          String
   createdAt            DateTime @default(now())
 
@@ -431,9 +450,29 @@ model IngredientPurchase {
   supplierCallLog    SupplierCallLog?   @relation(fields: [supplierCallLogId], references: [id], onDelete: SetNull)
   cafe               Cafe               @relation(fields: [cafeId], references: [id])
   createdBy          User               @relation("PurchaseCreator", fields: [createdById], references: [id])
+  lotConsumptions    LotConsumption[]
 
   @@index([cafeId, createdAt])
   @@index([ingredientSupplierId])
+}
+
+model LotConsumption {
+  id                   String          @id @default(cuid())
+  cafeId               String
+  sourceType           String
+  sourceId             String
+  ingredientPurchaseId String?
+  quantityConsumed     Int
+  perUnitInCents       Decimal         @db.Decimal(12, 4)
+  consumptionKind      ConsumptionKind @default(LOT)
+  createdAt            DateTime        @default(now())
+
+  cafe               Cafe                @relation(fields: [cafeId], references: [id])
+  ingredientPurchase IngredientPurchase? @relation(fields: [ingredientPurchaseId], references: [id], onDelete: SetNull)
+
+  @@index([sourceType, sourceId])
+  @@index([cafeId, createdAt])
+  @@index([ingredientPurchaseId])
 }
 
 model Recipe {
@@ -446,6 +485,11 @@ model Recipe {
   category             String?
   sellingPriceInCents  Int?
   discontinued         Boolean  @default(false)
+  // Sub-recipe yield: when set, this recipe can be referenced by other
+  // recipes as a composite ingredient. Both fields cleared together (or
+  // both set together) — partial null rejected at the action layer.
+  yieldQuantity        Int?
+  yieldUnit            String?
   cafeId         String
   createdAt      DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -454,6 +498,10 @@ model Recipe {
   ingredients RecipeIngredient[]
   steps       RecipeStep[]
   variations  RecipeVariation[]
+  // Inverse: rows that USE this recipe as a sub-recipe (so deletion can
+  // surface "still in use" if we ever want to defend against it).
+  parentIngredients         RecipeIngredient[]    @relation("SubRecipeOnRecipeIngredient")
+  parentVariationIngredients VariationIngredient[] @relation("SubRecipeOnVariationIngredient")
 
   @@index([cafeId])
 }
@@ -461,13 +509,23 @@ model Recipe {
 model RecipeIngredient {
   id                      String   @id @default(cuid())
   recipeId                String
-  ingredientId            String
+  // Polymorphic: exactly one of `ingredientId` or `subRecipeId` is non-null
+  // (XOR enforced at the action layer — Prisma can't express it cleanly).
+  // `ingredientId` non-null is the legacy "raw ingredient" row; `subRecipeId`
+  // non-null is the new "composite" row referencing another Recipe.
+  ingredientId            String?
+  subRecipeId             String?
   quantityPerServing      Int
-  subtotalOverrideInCents Int?
+  subtotalOverrideInCents Decimal? @db.Decimal(12, 4)
   createdAt               DateTime @default(now())
 
-  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
-  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  recipe     Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient? @relation(fields: [ingredientId], references: [id])
+  // Restrict deletion of a sub-recipe that's still referenced. Without this
+  // (default SET NULL), deleting the sub silently leaves orphan rows with
+  // BOTH ingredientId AND subRecipeId null — which the engine treats as a
+  // skip-and-continue, producing silent under-deduction at sale time.
+  subRecipe  Recipe?     @relation("SubRecipeOnRecipeIngredient", fields: [subRecipeId], references: [id], onDelete: Restrict)
 
   @@index([recipeId])
 }
@@ -515,13 +573,16 @@ model VariationStep {
 model VariationIngredient {
   id                      String   @id @default(cuid())
   variationId             String
-  ingredientId            String
+  // Polymorphic — see RecipeIngredient. XOR enforced at the action layer.
+  ingredientId            String?
+  subRecipeId             String?
   quantityPerServing      Int
   subtotalOverrideInCents Int?
   createdAt               DateTime @default(now())
 
   variation  RecipeVariation @relation(fields: [variationId], references: [id], onDelete: Cascade)
-  ingredient Ingredient      @relation(fields: [ingredientId], references: [id])
+  ingredient Ingredient?     @relation(fields: [ingredientId], references: [id])
+  subRecipe  Recipe?         @relation("SubRecipeOnVariationIngredient", fields: [subRecipeId], references: [id], onDelete: Restrict)
 
   @@index([variationId])
 }

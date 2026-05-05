@@ -6,6 +6,14 @@ import { requireAuth, requireRole } from "@/lib/auth";
 import { getCafeNow } from "@/lib/format";
 import { calculateDollarValue } from "@/lib/dollar-attribution";
 import { UNDO_TIMEOUT_MS } from "@/lib/constants";
+import {
+  applyConsumeFifo,
+  applyRestoreFifo,
+  encodeOverDeductionError,
+  getAvailableQty,
+  hasAnyLot,
+  LOT_RACE,
+} from "@/lib/lot-consume";
 import type { ActionResult } from "@/types";
 
 // ─── Schemas ────────────────────────────────────────────────
@@ -14,6 +22,7 @@ const logCompSchema = z.object({
   ingredientId: z.string().min(1),
   quantity: z.number().int().min(1),
   reason: z.string().min(1, "Reason is required").max(200),
+  confirmOverDeduction: z.boolean().optional(),
 });
 
 const updateBudgetSchema = z.object({
@@ -77,7 +86,7 @@ export async function logComp(
       return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { ingredientId, quantity, reason } = parsed.data;
+    const { ingredientId, quantity, reason, confirmOverDeduction } = parsed.data;
 
     const ingredient = await prisma.ingredient.findFirst({
       where: { id: ingredientId, cafeId },
@@ -94,16 +103,77 @@ export async function logComp(
 
     const dollarValueInCents = calculateDollarValue(ingredient, quantity);
 
-    const entry = await prisma.compEntry.create({
-      data: {
-        cafeId,
-        ingredientId,
-        quantity,
-        reason,
-        dollarValueInCents,
-        createdById: session.user.id,
-      },
-    });
+    // Sentinel thrown inside the txn when the over-deduction confirm dialog
+    // should be surfaced. Carries the `availableQty` snapshot read inside the
+    // txn so the client sees a value consistent with the would-be consume.
+    const OVER_DEDUCTION_THROW = "OVER_DEDUCTION_THROW";
+    const NO_LOTS_THROW = "NO_LOTS_THROW";
+    let availableLotQtySnapshot = 0;
+
+    let entry;
+    try {
+      entry = await prisma.$transaction(async (tx) => {
+        // Pre-flight FIFO over-deduction check INSIDE the transaction so the
+        // available-qty read and the consume share the same snapshot (avoids
+        // TOCTOU between pre-flight and consume).
+        const availableLotQty = await getAvailableQty(tx, ingredientId, cafeId);
+        if (availableLotQty < quantity) {
+          // No purchase history at all → block regardless of confirm flag.
+          // The OVER_DEDUCTION row would be priced at $0 (no most-recent lot),
+          // silently losing cost data.
+          const anyLot = await hasAnyLot(tx, ingredientId, cafeId);
+          if (!anyLot) {
+            throw new Error(NO_LOTS_THROW);
+          }
+          if (!confirmOverDeduction) {
+            availableLotQtySnapshot = availableLotQty;
+            throw new Error(OVER_DEDUCTION_THROW);
+          }
+        }
+
+        const created = await tx.compEntry.create({
+          data: {
+            cafeId,
+            ingredientId,
+            quantity,
+            reason,
+            dollarValueInCents,
+            createdById: session.user.id,
+          },
+        });
+        await applyConsumeFifo(tx, {
+          cafeId,
+          ingredientId,
+          requested: quantity,
+          sourceType: "COMP",
+          sourceId: created.id,
+        });
+        return created;
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === NO_LOTS_THROW) {
+        return {
+          success: false,
+          error: "NO_LOTS_RECORDED",
+        };
+      }
+      if (e instanceof Error && e.message === OVER_DEDUCTION_THROW) {
+        return {
+          success: false,
+          error: encodeOverDeductionError({
+            availableQty: availableLotQtySnapshot,
+            requestedQty: quantity,
+          }),
+        };
+      }
+      if (e instanceof Error && e.message === LOT_RACE) {
+        return {
+          success: false,
+          error: "Lot updated by another action — please retry",
+        };
+      }
+      throw e;
+    }
 
     const budgetInfo = await calculateBudgetRemaining(cafeId, cafe.timezone);
 
@@ -125,19 +195,24 @@ export async function undoComp(id: string): Promise<ActionResult<void>> {
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
+    // Look up first to disambiguate "not found" vs "already voided".
     const entry = await prisma.compEntry.findFirst({
       where: { id, cafeId, deletedAt: null },
     });
     if (!entry) return { success: false, error: "Entry not found" };
+    if (entry.voidedAt) return { success: false, error: "Already voided" };
 
     const elapsed = Date.now() - entry.createdAt.getTime();
     if (elapsed > UNDO_TIMEOUT_MS) {
       return { success: false, error: "Undo window has expired" };
     }
 
-    await prisma.compEntry.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    await prisma.$transaction(async (tx) => {
+      await tx.compEntry.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+      await applyRestoreFifo(tx, { sourceType: "COMP", sourceId: id });
     });
 
     return { success: true, data: undefined };
@@ -358,12 +433,15 @@ export async function voidComp(id: string): Promise<ActionResult<void>> {
     });
     if (!entry) return { success: false, error: "Entry not found" };
 
-    await prisma.compEntry.update({
-      where: { id },
-      data: {
-        voidedAt: new Date(),
-        voidedById: session.user.id,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.compEntry.update({
+        where: { id },
+        data: {
+          voidedAt: new Date(),
+          voidedById: session.user.id,
+        },
+      });
+      await applyRestoreFifo(tx, { sourceType: "COMP", sourceId: id });
     });
 
     return { success: true, data: undefined };

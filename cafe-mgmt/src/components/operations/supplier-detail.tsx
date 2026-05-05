@@ -10,8 +10,10 @@ import {
   removeIngredientSupplier,
   updateIngredientSupplier,
 } from "@/actions/setup.actions";
-import { parseRMToCents } from "@/lib/format";
+import { parseRMToCentsPrecise } from "@/lib/format";
 import { useToast } from "@/components/ui/toast";
+import { UnitPicker } from "@/components/ui/unit-picker";
+import { DEFAULT_ENABLED_UNITS } from "@/lib/units";
 
 interface SupplierProduct {
   id: string;
@@ -51,10 +53,11 @@ interface Props {
   purchases: PurchaseRow[];
   allIngredients: IngredientOption[];
   mode: "manager" | "readonly";
+  enabledUnits?: string[];
 }
 
 function formatRM(cents: number): string {
-  return `RM ${(cents / 100).toFixed(2)}`;
+  return `RM ${(Math.floor(cents) / 100).toFixed(2)}`;
 }
 
 function formatDate(iso: string): string {
@@ -70,6 +73,7 @@ export function SupplierDetail({
   purchases,
   allIngredients,
   mode,
+  enabledUnits = DEFAULT_ENABLED_UNITS,
 }: Props) {
   const isManager = mode === "manager";
   const [supplier, setSupplier] = useState(initialSupplier);
@@ -155,7 +159,7 @@ export function SupplierDetail({
 
   function startEditProduct(product: SupplierProduct) {
     setEditingProductId(product.id);
-    setEditProductPrice((product.priceInCents / 100).toFixed(2));
+    setEditProductPrice((Math.floor(product.priceInCents) / 100).toFixed(2));
     setEditProductUnit(product.unit);
   }
 
@@ -166,7 +170,7 @@ export function SupplierDetail({
   }
 
   function handleSaveProduct(product: SupplierProduct) {
-    const priceInCents = parseRMToCents(editProductPrice);
+    const priceInCents = parseRMToCentsPrecise(editProductPrice);
     if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
@@ -246,7 +250,7 @@ export function SupplierDetail({
       toast("Choose an ingredient");
       return;
     }
-    const priceInCents = parseRMToCents(addPrice);
+    const priceInCents = parseRMToCentsPrecise(addPrice);
     if (priceInCents === null || priceInCents < 0) {
       toast("Invalid price");
       return;
@@ -496,14 +500,12 @@ export function SupplierDetail({
                           >
                             Unit
                           </label>
-                          <input
+                          <UnitPicker
                             id={`edit-unit-${p.id}`}
-                            type="text"
-                            maxLength={20}
                             value={editProductUnit}
-                            onChange={(e) =>
-                              setEditProductUnit(e.target.value)
-                            }
+                            onChange={setEditProductUnit}
+                            enabledUnits={enabledUnits}
+                            ariaLabel={`Edit unit for ${p.ingredientName}`}
                             className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
                           />
                         </div>
@@ -615,13 +617,12 @@ export function SupplierDetail({
                     >
                       Unit
                     </label>
-                    <input
+                    <UnitPicker
                       id="add-product-unit"
-                      type="text"
-                      maxLength={20}
                       value={addUnit}
-                      onChange={(e) => setAddUnit(e.target.value)}
-                      placeholder="kg"
+                      onChange={setAddUnit}
+                      enabledUnits={enabledUnits}
+                      ariaLabel="New product unit"
                       className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1.5 text-meta"
                     />
                   </div>
