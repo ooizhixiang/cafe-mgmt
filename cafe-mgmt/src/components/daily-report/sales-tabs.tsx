@@ -31,6 +31,17 @@ export function SalesTabs({ activeTab }: { activeTab: string }) {
         Report
       </button>
       <button
+        onClick={() => setTab("history")}
+        className={`flex-1 rounded-lg py-2 text-body font-medium transition-all ${
+          activeTab === "history"
+            ? "bg-[var(--bg-primary)] text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)]"
+        }`}
+        style={activeTab === "history" ? { boxShadow: "var(--shadow-card)" } : undefined}
+      >
+        History
+      </button>
+      <button
         onClick={() => setTab("analysis")}
         className={`flex-1 rounded-lg py-2 text-body font-medium transition-all ${
           activeTab === "analysis"

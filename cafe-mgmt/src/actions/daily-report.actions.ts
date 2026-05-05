@@ -2,10 +2,10 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
+import { requireAuth, requireRole } from "@/lib/auth";
 import { getCafeNow } from "@/lib/format";
 import { checkThresholds } from "@/lib/threshold-check";
-import { applyConsumeFifo } from "@/lib/lot-consume";
+import { applyConsumeFifo, applyRestoreFifo } from "@/lib/lot-consume";
 import { currentCostPerUnit } from "@/lib/fifo";
 import {
   expandRecipeToLeaves,
@@ -332,24 +332,12 @@ export async function submitDailyReport(
     // Persist sales entries and deduct from inventory in a transaction
     const deductions: Array<{ name: string; unit: string; deducted: number; newStock: number | null }> = [];
 
-    // Idempotency sentinel — thrown inside the txn when a SalesEntry already
-    // exists for (cafeId, today). Without this guard a double-submit (network
-    // retry, manager resubmit) would create duplicate SalesEntry rows AND run
-    // applyConsumeFifo again, doubling lot decrements.
-    const ALREADY_SUBMITTED_THROW = "ALREADY_SUBMITTED_THROW";
+    // One submission ID per call — stamped on every SalesEntry row created
+    // below so the History view can group them. Multiple submissions per day
+    // are allowed; merging happens at read-time.
+    const submissionId = crypto.randomUUID();
 
-    try {
-      await prisma.$transaction(async (tx) => {
-      // Pre-flight inside the txn so the existence check shares the same
-      // snapshot as the writes below.
-      const existingSubmission = await tx.salesEntry.findFirst({
-        where: { cafeId, saleDate: today },
-        select: { id: true },
-      });
-      if (existingSubmission) {
-        throw new Error(ALREADY_SUBMITTED_THROW);
-      }
-
+    await prisma.$transaction(async (tx) => {
       // Save sales entries — per-entry FIFO consume drives `costInCents`.
       // Sales over-deduct silently (no confirm); the OVER_DEDUCTION row gets
       // priced at the most-recent lot.
@@ -373,6 +361,7 @@ export async function submitDailyReport(
             costInCents: 0,
             saleDate: today,
             createdById: userId,
+            submissionId,
           },
         });
 
@@ -496,6 +485,7 @@ export async function submitDailyReport(
             costInCents: 0,
             saleDate: today,
             createdById: userId,
+            submissionId,
           },
         });
         // Auto-deduct stock
@@ -547,13 +537,7 @@ export async function submitDailyReport(
           newStock: newQty,
         });
       }
-      });
-    } catch (e) {
-      if (e instanceof Error && e.message === ALREADY_SUBMITTED_THROW) {
-        return { success: false, error: "ALREADY_SUBMITTED" };
-      }
-      throw e;
-    }
+    });
 
     // Check thresholds after deductions
     for (const [ingredientId] of deductionMap) {
@@ -602,11 +586,12 @@ export async function getSalesAnalysis(
       startDate.setDate(startDate.getDate() - 30);
     }
 
-    // Get sales entries for the period
+    // Get sales entries for the period (exclude voided submissions).
     const salesEntries = await prisma.salesEntry.findMany({
       where: {
         cafeId,
         saleDate: { gte: startDate, lte: now },
+        voidedAt: null,
       },
     });
 
@@ -727,7 +712,7 @@ export async function getRevenueAnalysis(
     else if (range === "month") startDate.setDate(startDate.getDate() - 30);
 
     const entries = await prisma.salesEntry.findMany({
-      where: { cafeId, saleDate: { gte: startDate, lte: now } },
+      where: { cafeId, saleDate: { gte: startDate, lte: now }, voidedAt: null },
     });
 
     const totalRevenueInCents = entries.reduce((s, e) => s + e.revenueInCents, 0);
@@ -790,5 +775,334 @@ export async function getRevenueAnalysis(
     };
   } catch {
     return { success: false, error: "Failed to load revenue data" };
+  }
+}
+
+// ─── Sales History (per-day with merge + void) ──────────────
+
+export type SalesHistoryRow = {
+  recipeName: string;
+  qtySold: number;
+  revenueInCents: number;
+  costInCents: number;
+};
+
+export type SalesHistorySubmission = {
+  id: string | null; // submissionId; null = legacy (pre-feature) rows
+  createdAt: string; // ISO
+  createdByName: string;
+  voidedAt: string | null;
+  rows: SalesHistoryRow[];
+};
+
+export type SalesHistoryDay = {
+  saleDate: string; // YYYY-MM-DD
+  submissions: SalesHistorySubmission[];
+  mergedByRecipe: SalesHistoryRow[];
+};
+
+export async function getSalesHistory(): Promise<
+  ActionResult<SalesHistoryDay[]>
+> {
+  try {
+    const session = await requireAuth();
+    const cafeId = session.user.cafeId;
+    const isManager = session.user.role === "MANAGER";
+
+    const where: Record<string, unknown> = { cafeId };
+    if (!isManager) {
+      where.createdById = session.user.id;
+    }
+
+    const entries = await prisma.salesEntry.findMany({
+      where: where as Parameters<typeof prisma.salesEntry.findMany>[0] extends {
+        where?: infer W;
+      }
+        ? W
+        : never,
+      include: {
+        createdBy: { select: { name: true } },
+      },
+      orderBy: [{ saleDate: "desc" }, { createdAt: "asc" }],
+    });
+
+    // Group by saleDate (YYYY-MM-DD), then by submissionId (NULL collapses
+    // into a single synthetic "Legacy" submission per date).
+    type BucketRow = SalesHistoryRow & { voidedAt: Date | null };
+    const dayMap = new Map<
+      string,
+      Map<
+        string, // submissionId or "__legacy__"
+        {
+          id: string | null;
+          createdAt: Date;
+          createdByName: string;
+          voidedAt: Date | null;
+          rows: BucketRow[];
+        }
+      >
+    >();
+
+    for (const e of entries) {
+      const saleDate = e.saleDate.toISOString().slice(0, 10);
+      const subKey = e.submissionId ?? "__legacy__";
+      let dayBucket = dayMap.get(saleDate);
+      if (!dayBucket) {
+        dayBucket = new Map();
+        dayMap.set(saleDate, dayBucket);
+      }
+      let sub = dayBucket.get(subKey);
+      if (!sub) {
+        sub = {
+          id: e.submissionId ?? null,
+          createdAt: e.createdAt,
+          createdByName: e.submissionId ? e.createdBy.name : "Legacy",
+          voidedAt: e.voidedAt,
+          rows: [],
+        };
+        dayBucket.set(subKey, sub);
+      }
+      sub.rows.push({
+        recipeName: e.recipeName,
+        qtySold: e.qtySold,
+        revenueInCents: e.revenueInCents,
+        costInCents: e.costInCents,
+        voidedAt: e.voidedAt,
+      });
+      if (e.createdAt < sub.createdAt) sub.createdAt = e.createdAt;
+      // Real submissions (non-null submissionId) share void state across all
+      // rows; the legacy bucket can be mixed. If any row is live, mark the
+      // whole legacy bucket as not-voided so the per-row merge below decides
+      // what to count.
+      if (sub.voidedAt && !e.voidedAt) {
+        sub.voidedAt = null;
+      }
+    }
+
+    const result: SalesHistoryDay[] = [];
+    for (const [saleDate, dayBucket] of dayMap) {
+      const submissions: SalesHistorySubmission[] = [];
+      const mergeMap = new Map<string, SalesHistoryRow>();
+
+      for (const sub of dayBucket.values()) {
+        submissions.push({
+          id: sub.id,
+          createdAt: sub.createdAt.toISOString(),
+          createdByName: sub.createdByName,
+          voidedAt: sub.voidedAt ? sub.voidedAt.toISOString() : null,
+          rows: sub.rows.map(({ voidedAt: _v, ...r }) => r),
+        });
+
+        if (sub.voidedAt) continue;
+        for (const row of sub.rows) {
+          // Per-row voided check matters for the Legacy bucket which can
+          // contain a mix of voided and non-voided rows. For real submissions
+          // every row shares the bucket's void state so the check is a no-op.
+          if (row.voidedAt) continue;
+          const existing = mergeMap.get(row.recipeName);
+          if (existing) {
+            existing.qtySold += row.qtySold;
+            existing.revenueInCents += row.revenueInCents;
+            existing.costInCents += row.costInCents;
+          } else {
+            const { voidedAt: _v, ...rest } = row;
+            mergeMap.set(row.recipeName, { ...rest });
+          }
+        }
+      }
+
+      // Sort submissions within a day by createdAt asc.
+      submissions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+      result.push({
+        saleDate,
+        submissions,
+        mergedByRecipe: Array.from(mergeMap.values()).sort((a, b) =>
+          a.recipeName.localeCompare(b.recipeName)
+        ),
+      });
+    }
+
+    // Most recent date first.
+    result.sort((a, b) => b.saleDate.localeCompare(a.saleDate));
+
+    return { success: true, data: result };
+  } catch {
+    return { success: false, error: "Failed to load sales history" };
+  }
+}
+
+const voidSalesSubmissionSchema = z.object({
+  submissionId: z.string().min(1),
+  reason: z.string().max(200).optional(),
+});
+
+export async function voidSalesSubmission(
+  input: z.infer<typeof voidSalesSubmissionSchema>
+): Promise<ActionResult<void>> {
+  try {
+    const session = await requireRole("MANAGER");
+    const cafeId = session.user.cafeId;
+    const parsed = voidSalesSubmissionSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
+    }
+
+    const { submissionId, reason } = parsed.data;
+
+    // Find all live (non-voided) rows belonging to the submission.
+    const rows = await prisma.salesEntry.findMany({
+      where: { submissionId, cafeId, voidedAt: null },
+      select: { id: true },
+    });
+    if (rows.length === 0) {
+      // Idempotent: already-voided or unknown submission → success no-op.
+      return { success: true, data: undefined };
+    }
+
+    const today = getCafeNow();
+    today.setHours(0, 0, 0, 0);
+
+    const affectedIngredientIds = new Set<string>();
+
+    await prisma.$transaction(async (tx) => {
+      // Mark every row voided in one update.
+      await tx.salesEntry.updateMany({
+        where: { id: { in: rows.map((r) => r.id) } },
+        data: {
+          voidedAt: new Date(),
+          voidedById: session.user.id,
+          voidReason: reason ?? null,
+        },
+      });
+
+      // Sum LotConsumption qty per ingredient (across LOT-kind rows that
+      // still reference an active IngredientPurchase). This is the amount we
+      // need to add back to today's InventoryCount per ingredient.
+      const consumptions = await tx.lotConsumption.findMany({
+        where: {
+          sourceType: "SALES",
+          sourceId: { in: rows.map((r) => r.id) },
+        },
+        select: {
+          quantityConsumed: true,
+          ingredientPurchaseId: true,
+          consumptionKind: true,
+          ingredientPurchase: {
+            select: {
+              ingredientSupplier: { select: { ingredientId: true } },
+            },
+          },
+        },
+      });
+
+      const restoreByIngredient = new Map<string, number>();
+      for (const c of consumptions) {
+        // OVER_DEDUCTION rows have no lot to restore — they aren't part of
+        // any ingredient's stock. We still need them to count toward the
+        // inventory restore though, since the original sale deducted from
+        // InventoryCount as if the qty was real. Walk via the ingredient
+        // linkage on the purchase row when present; over-deduction rows
+        // without a purchase need a fallback path. Here we conservatively
+        // skip OVER_DEDUCTION rows (they had no lot stock backing them).
+        if (c.consumptionKind !== "LOT") continue;
+        const ingredientId =
+          c.ingredientPurchase?.ingredientSupplier.ingredientId;
+        if (!ingredientId) continue;
+        affectedIngredientIds.add(ingredientId);
+        restoreByIngredient.set(
+          ingredientId,
+          (restoreByIngredient.get(ingredientId) ?? 0) + c.quantityConsumed
+        );
+      }
+
+      // Restore FIFO lots for every voided row. This refills
+      // IngredientPurchase.remainingQuantity and deletes the LotConsumption
+      // rows (LOT and OVER_DEDUCTION alike).
+      for (const row of rows) {
+        await applyRestoreFifo(tx, {
+          sourceType: "SALES",
+          sourceId: row.id,
+        });
+      }
+
+      // Bump today's InventoryCount per affected ingredient by the leaf
+      // qty restored. Recompute `dollarValueInCents` using the same derived-
+      // cost source the submit path uses (oldest non-empty lot, or manual
+      // override) so the inventory page's qty and dollar value stay in
+      // sync after a void.
+      const restoreIds = Array.from(restoreByIngredient.keys());
+      const [ingredientMeta, oldestLots] = await Promise.all([
+        tx.ingredient.findMany({
+          where: { id: { in: restoreIds }, cafeId },
+          select: { id: true, manualCostOverride: true, costPerUnitInCents: true },
+        }),
+        tx.ingredientPurchase.findMany({
+          where: {
+            cafeId,
+            remainingQuantity: { gt: 0 },
+            ingredientSupplier: { ingredientId: { in: restoreIds } },
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: {
+            quantity: true,
+            totalPriceInCents: true,
+            ingredientSupplier: { select: { ingredientId: true } },
+          },
+        }),
+      ]);
+      const oldestLotByIngredient = new Map<string, { totalPriceInCents: number; quantity: number }>();
+      for (const row of oldestLots) {
+        const id = row.ingredientSupplier.ingredientId;
+        if (!oldestLotByIngredient.has(id)) {
+          oldestLotByIngredient.set(id, {
+            totalPriceInCents: row.totalPriceInCents.toNumber(),
+            quantity: row.quantity,
+          });
+        }
+      }
+      const derivedCostByIngredient = new Map<string, number | null>();
+      for (const meta of ingredientMeta) {
+        const rawCost = meta.costPerUnitInCents === null ? null : meta.costPerUnitInCents.toNumber();
+        derivedCostByIngredient.set(
+          meta.id,
+          currentCostPerUnit(
+            { manualCostOverride: meta.manualCostOverride, costPerUnitInCents: rawCost },
+            oldestLotByIngredient.get(meta.id) ?? null
+          )
+        );
+      }
+
+      for (const [ingredientId, addQty] of restoreByIngredient) {
+        const count = await tx.inventoryCount.findUnique({
+          where: { ingredientId_countDate: { ingredientId, countDate: today } },
+        });
+        if (!count) continue;
+        const newQty = count.quantity + addQty;
+        const derived = derivedCostByIngredient.get(ingredientId) ?? null;
+        await tx.inventoryCount.update({
+          where: { id: count.id },
+          data: {
+            quantity: newQty,
+            dollarValueInCents: derived !== null ? Math.round(newQty * derived) : null,
+          },
+        });
+      }
+    });
+
+    // Recheck thresholds outside the transaction (mirror wastage flow).
+    for (const ingredientId of affectedIngredientIds) {
+      await checkThresholds(cafeId, ingredientId).catch(() => {});
+    }
+
+    return { success: true, data: undefined };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    return { success: false, error: "Failed to void submission" };
   }
 }

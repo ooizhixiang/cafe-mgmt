@@ -95,6 +95,7 @@ model User {
   supplierCalls      SupplierCallLog[]    @relation("SupplierCaller")
   pushSubscriptions  PushSubscription[]
   salesEntries       SalesEntry[]         @relation("SalesCreator")
+  salesVoided        SalesEntry[]         @relation("SalesVoider")
   ingredientPurchases IngredientPurchase[] @relation("PurchaseCreator")
 
   @@index([cafeId])
@@ -607,22 +608,28 @@ model GrabAndGoItem {
 // ─── Sales Tracking ─────────────────────────────────────────
 
 model SalesEntry {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   cafeId          String
   recipeId        String
   recipeName      String
   qtySold         Int
-  revenueInCents  Int      @default(0)
-  costInCents     Int      @default(0)
-  saleDate        DateTime @db.Date
+  revenueInCents  Int       @default(0)
+  costInCents     Int       @default(0)
+  saleDate        DateTime  @db.Date
   createdById     String
-  createdAt       DateTime @default(now())
+  submissionId    String?
+  voidedAt        DateTime?
+  voidedById      String?
+  voidReason      String?
+  createdAt       DateTime  @default(now())
 
   cafe      Cafe   @relation(fields: [cafeId], references: [id])
   createdBy User   @relation("SalesCreator", fields: [createdById], references: [id])
+  voidedBy  User?  @relation("SalesVoider", fields: [voidedById], references: [id])
 
   @@index([cafeId, saleDate])
   @@index([recipeId, saleDate])
+  @@index([cafeId, saleDate, submissionId])
 }
 
 // ─── Epic 5: Phase 2 Features ───────────────────────────────

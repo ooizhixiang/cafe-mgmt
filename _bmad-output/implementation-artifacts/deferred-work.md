@@ -440,3 +440,26 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **Stale lazy `await import("@/lib/format")` in `checklist.actions.ts:401`.** Originally lazy to avoid a circular dep when timezone needed a cafe lookup. Now that `getCafeNow()` is arg-less and the cafe lookup is gone, the `getMyActivity` path can use a top-level static import.
   - Severity: low (cosmetic)
+
+## From spec-sales-report-history-merge-and-void (review iteration 1)
+
+- **OVER_DEDUCTION rows leave InventoryCount under-restored on void.** When an original sale exhausted FIFO stock, a synthetic `LotConsumption` row with `consumptionKind=OVER_DEDUCTION` and `ingredientPurchaseId=null` was written. Submit deducted the over-deduct qty from `InventoryCount.quantity`; void can't ascertain the ingredientId for those rows (no purchase to walk through), so it conservatively skips them. Net effect: voiding a submission that over-deducted leaves today's count short by the OVER qty.
+  - Severity: medium (only triggers when stock was exhausted at submit time)
+  - Fix: schema change — store `ingredientId` directly on `LotConsumption` so OVER rows can be resolved without a join through `IngredientPurchase`. Then include OVER quantities in `restoreByIngredient`.
+
+- **`Math.max(0, currentQty - info.total)` clamp on submit isn't reversed on void.** If submit clamped `InventoryCount.quantity` at 0 (deduction exceeded available stock), the actual qty written ≠ `info.total`. Restoring `currentQty + addQty` over-restores by the clamped portion. Compounds the OVER_DEDUCTION fix above — needs the same per-row stored ingredientId to compute the actual delta.
+  - Severity: low (rare; only when stock was already at 0 at submit time)
+
+- **Concurrent void of the same submission could double-restore.** Pre-flight `findMany` runs before opening the transaction; two simultaneous voids both see non-voided rows and both call `applyRestoreFifo`. Single-cafe single-user setup → low practical risk.
+  - Severity: low (concurrency edge in a single-user app)
+  - Fix: use `updateMany WHERE voidedAt IS NULL ... { voidedAt: now }` as the dedup gate; if `count === 0`, return success without restoring.
+
+- **`getSalesHistory` is unbounded.** No pagination, no date cap. After months of operation the response size and in-memory grouping grow without limit.
+  - Severity: low (cosmetic until data volume grows)
+  - Fix: add `take` + cursor or a `since: Date` parameter; History UI can request "last 90 days" by default with a "load older" button.
+
+- **Staff view of `mergedByRecipe` is misleading.** Spec said "staff sees own only" but didn't specify what `mergedByRecipe` should mean. Current behaviour: filters submissions to the staff's own, then merges only those — UI labels them as the day's totals. Needs intent clarification or a UI label change.
+  - Severity: low (single-user app — every user is effectively manager)
+
+- **`daily-report.actions.test.ts` was thin at baseline (1 test).** Increased to 5 with this story but coverage of `submitDailyReport` itself remains unit-test-light. Worth a focused test pass when next touching this file.
+  - Severity: low (coverage debt, not a defect)
