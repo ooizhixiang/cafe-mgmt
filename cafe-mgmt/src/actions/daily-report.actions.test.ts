@@ -33,6 +33,7 @@ vi.mock("@/lib/threshold-check", () => ({
 
 vi.mock("@/lib/format", () => ({
   getCafeNow: () => new Date("2026-04-27T08:00:00Z"),
+  getCafeToday: () => new Date("2026-04-27T00:00:00Z"),
 }));
 
 vi.mock("@/lib/lot-consume", () => ({

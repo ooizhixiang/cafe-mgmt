@@ -463,3 +463,21 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **`daily-report.actions.test.ts` was thin at baseline (1 test).** Increased to 5 with this story but coverage of `submitDailyReport` itself remains unit-test-light. Worth a focused test pass when next touching this file.
   - Severity: low (coverage debt, not a defect)
+
+## From spec-fix-date-only-tz-shift (review iteration 1)
+
+- **Pre-fix `@db.Date` rows are orphaned in lookups by date key.** The fix changes the canonical `countDate`/`saleDate`/`DailyChecklist.date`/`entryDate` value for "today" from server-local-midnight (yesterday's UTC date on a KL server) to UTC midnight of the KL day. Existing rows written before the fix sit under the old (wrong) key and won't match new lookups. Concretely: an `InventoryCount` saved at KL 14:00 yesterday (under `countDate = 2026-05-04`) is invisible when today's view (after fix) queries `countDate = 2026-05-05`. New writes today create a new row instead of updating the orphan.
+  - Severity: medium (cosmetic data noise; new writes correct; old orphans visible only via raw queries)
+  - Fix: a one-shot data backfill — for every row where `(createdAt - <dateColumn>) >= 16h` AND the corresponding KL date of `createdAt` ≠ `<dateColumn>`, advance `<dateColumn>` by one day. Do as a separate spec.
+
+- **`getMyActivity` filters `completedAt` (DateTime) using a host-local-midnight bound.** `src/actions/checklist.actions.ts:401` builds `todayStart` via `new Date(getFullYear, getMonth, getDate)` — wrong by 8h on a KL server. Different semantic class than this spec (which targeted `@db.Date` columns). Needs its own helper that returns "today's KL day boundaries as UTC instants".
+  - Severity: medium (window off by 8h; items completed near midnight assigned to wrong day)
+
+- **`reporting.actions.ts` weekly aggregation filters `createdAt` (DateTime) against weekStart/weekEnd UTC midnights.** A KL Sunday 23:30 entry has UTC instant `Sunday 15:30 UTC` and weekEnd is next Monday `00:00 UTC` — entries between Sunday 16:00 UTC and Monday 00:00 UTC (KL Monday 00:00–08:00) get counted in the wrong week. Same family as `getMyActivity` — needs KL-day-boundaries-as-UTC-instants helper.
+  - Severity: low–medium (off-by-8h at week boundary; only affects entries created in the first 8 hours of a KL Monday)
+
+- **Test coverage debt: tests assert UTC midnight shape but not the *correct* KL date.** `inventory.actions.test.ts:778-788, 931-941` and similar verify `getUTCHours()===0` etc., which would still pass if a regression picked yesterday or tomorrow. Worth augmenting when next touching these tests.
+  - Severity: low (regression-detection gap)
+
+- **Hard-coded mock dates in `comp.actions.flows.test.ts`, `daily-report.actions.test.ts`, `wastage.actions.flows.test.ts` decouple `getCafeToday` from `getCafeNow`.** If a future test changes the `getCafeNow` mock to a different KL day, `getCafeToday` will silently lie. Acceptable today since both mocks return the same hard-coded day; flag if test fixtures get split.
+  - Severity: low (latent test fragility)

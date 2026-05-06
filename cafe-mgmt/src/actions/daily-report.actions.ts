@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { checkThresholds } from "@/lib/threshold-check";
 import { applyConsumeFifo, applyRestoreFifo } from "@/lib/lot-consume";
 import { currentCostPerUnit } from "@/lib/fifo";
@@ -265,8 +265,7 @@ export async function submitDailyReport(
       }
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     // Derived per-unit cost per ingredient — drives InventoryCount.dollarValueInCents
     // so the valuation matches what the inventory/recipe pages display.
@@ -576,14 +575,13 @@ export async function getSalesAnalysis(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const now = getCafeNow();
-    now.setHours(0, 0, 0, 0);
+    const now = getCafeToday();
 
     const startDate = new Date(now);
     if (range === "week") {
-      startDate.setDate(startDate.getDate() - 7);
+      startDate.setUTCDate(startDate.getUTCDate() - 7);
     } else if (range === "month") {
-      startDate.setDate(startDate.getDate() - 30);
+      startDate.setUTCDate(startDate.getUTCDate() - 30);
     }
 
     // Get sales entries for the period (exclude voided submissions).
@@ -704,12 +702,11 @@ export async function getRevenueAnalysis(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const now = getCafeNow();
-    now.setHours(0, 0, 0, 0);
+    const now = getCafeToday();
 
     const startDate = new Date(now);
-    if (range === "week") startDate.setDate(startDate.getDate() - 7);
-    else if (range === "month") startDate.setDate(startDate.getDate() - 30);
+    if (range === "week") startDate.setUTCDate(startDate.getUTCDate() - 7);
+    else if (range === "month") startDate.setUTCDate(startDate.getUTCDate() - 30);
 
     const entries = await prisma.salesEntry.findMany({
       where: { cafeId, saleDate: { gte: startDate, lte: now }, voidedAt: null },
@@ -963,8 +960,7 @@ export async function voidSalesSubmission(
       return { success: true, data: undefined };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const affectedIngredientIds = new Set<string>();
 

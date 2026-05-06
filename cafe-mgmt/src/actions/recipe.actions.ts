@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { currentCostPerUnit } from "@/lib/fifo";
 import {
   expandRecipeToLeaves,
@@ -499,8 +499,7 @@ export async function getRecipe(
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const recipe = await prisma.recipe.findFirst({
       where: { id, cafeId },

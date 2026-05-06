@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 
 /**
  * Deduct inventory quantity, capping at 0 (never negative).
@@ -10,8 +10,7 @@ export async function deductInventory(
   quantity: number,
   cafeId: string
 ) {
-  const today = getCafeNow();
-  today.setHours(0, 0, 0, 0);
+  const today = getCafeToday();
 
   const currentCount = await prisma.inventoryCount.findUnique({
     where: {
@@ -46,8 +45,7 @@ export async function restoreInventory(
   quantity: number,
   cafeId: string
 ) {
-  const today = getCafeNow();
-  today.setHours(0, 0, 0, 0);
+  const today = getCafeToday();
 
   const currentCount = await prisma.inventoryCount.findUnique({
     where: {

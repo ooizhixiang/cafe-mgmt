@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday, getWeekStart } from "@/lib/format";
 import type { ActionResult } from "@/types";
 
 interface WeekData {
@@ -10,15 +10,6 @@ interface WeekData {
   weekEnd: string;
   wastageTotalInCents: number;
   compTotalInCents: number;
-}
-
-function getWeekStart(date: Date, resetDay: number): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const currentDay = d.getDay();
-  const diff = (currentDay - resetDay + 7) % 7;
-  d.setDate(d.getDate() - diff);
-  return d;
 }
 
 export async function getWeeklyTotals(): Promise<ActionResult<WeekData[]>> {
@@ -29,15 +20,15 @@ export async function getWeeklyTotals(): Promise<ActionResult<WeekData[]>> {
     const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
     const resetDay = budget?.resetDay ?? 1; // Default Monday
 
-    const now = getCafeNow();
+    const today = getCafeToday();
     const weeks: WeekData[] = [];
 
     for (let i = 0; i < 5; i++) {
-      const refDate = new Date(now);
-      refDate.setDate(refDate.getDate() - i * 7);
+      const refDate = new Date(today);
+      refDate.setUTCDate(refDate.getUTCDate() - i * 7);
       const weekStart = getWeekStart(refDate, resetDay);
       const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 7);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
 
       const [wastageResult, compResult] = await Promise.all([
         prisma.wastageEntry.aggregate({
@@ -90,8 +81,8 @@ export async function getCurrentWeekTotals(): Promise<
     const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
     const resetDay = budget?.resetDay ?? 1;
 
-    const now = getCafeNow();
-    const weekStart = getWeekStart(now, resetDay);
+    const today = getCafeToday();
+    const weekStart = getWeekStart(today, resetDay);
 
     const [wastageResult, compResult] = await Promise.all([
       prisma.wastageEntry.aggregate({

@@ -102,37 +102,38 @@ describe("updateBudgetSchema", () => {
 });
 
 describe("Week start calculation", () => {
-  function getWeekStart(now: Date, resetDay: number): Date {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    const currentDay = d.getDay();
+  // Mirrors the canonical helper in src/lib/format.ts (UTC-based, since the
+  // production site now feeds it UTC-midnight dates from getCafeToday()).
+  function getWeekStart(today: Date, resetDay: number): Date {
+    const d = new Date(today);
+    const currentDay = d.getUTCDay();
     const diff = (currentDay - resetDay + 7) % 7;
-    d.setDate(d.getDate() - diff);
+    d.setUTCDate(d.getUTCDate() - diff);
     return d;
   }
 
-  it("finds Monday start when today is Wednesday", () => {
-    // Wednesday March 12, 2026
-    const wed = new Date(2026, 2, 12);
-    const start = getWeekStart(wed, 1); // Monday
-    expect(start.getDay()).toBe(1);
-    expect(start.getDate()).toBe(9); // March 9 is Monday
+  it("finds Monday start when today is Thursday", () => {
+    // Thursday March 12, 2026 (UTC)
+    const thu = new Date(Date.UTC(2026, 2, 12));
+    const start = getWeekStart(thu, 1); // Monday
+    expect(start.getUTCDay()).toBe(1);
+    expect(start.getUTCDate()).toBe(9); // March 9 is Monday
   });
 
   it("returns today when today is the reset day", () => {
-    // Monday March 9, 2026
-    const mon = new Date(2026, 2, 9);
+    // Monday March 9, 2026 (UTC)
+    const mon = new Date(Date.UTC(2026, 2, 9));
     const start = getWeekStart(mon, 1); // Monday
-    expect(start.getDay()).toBe(1);
-    expect(start.getDate()).toBe(9);
+    expect(start.getUTCDay()).toBe(1);
+    expect(start.getUTCDate()).toBe(9);
   });
 
   it("finds Sunday start when today is Saturday", () => {
-    // Saturday March 14, 2026
-    const sat = new Date(2026, 2, 14);
+    // Saturday March 14, 2026 (UTC)
+    const sat = new Date(Date.UTC(2026, 2, 14));
     const start = getWeekStart(sat, 0); // Sunday
-    expect(start.getDay()).toBe(0);
-    expect(start.getDate()).toBe(8); // March 8
+    expect(start.getUTCDay()).toBe(0);
+    expect(start.getUTCDate()).toBe(8); // March 8
   });
 });
 

@@ -3,6 +3,8 @@ import {
   DEFAULT_TIME_BOUNDARIES,
   getDefaultTimeBoundaries,
   getCafeNow,
+  getCafeToday,
+  getWeekStart,
   CAFE_TIMEZONE,
   formatCents,
   formatTime,
@@ -82,6 +84,63 @@ describe("getCafeNow", () => {
       `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`
     );
     expect(Math.abs(cafe.getTime() - expected.getTime())).toBeLessThan(2000);
+  });
+});
+
+describe("getCafeToday", () => {
+  it("returns a Date at UTC midnight (toISOString ends with T00:00:00.000Z)", () => {
+    const today = getCafeToday();
+    expect(today.toISOString()).toMatch(/T00:00:00\.000Z$/);
+  });
+
+  it("UTC date components match the KL calendar date from getCafeNow", () => {
+    const now = getCafeNow();
+    const today = getCafeToday();
+    expect(today.getUTCFullYear()).toBe(now.getFullYear());
+    expect(today.getUTCMonth()).toBe(now.getMonth());
+    expect(today.getUTCDate()).toBe(now.getDate());
+  });
+
+  it("is stable across multiple calls within the same KL day", () => {
+    const a = getCafeToday();
+    const b = getCafeToday();
+    expect(a.getTime()).toBe(b.getTime());
+  });
+});
+
+describe("getWeekStart", () => {
+  // Wednesday March 11, 2026 (UTC). getUTCDay() = 3.
+  const wed = new Date(Date.UTC(2026, 2, 11));
+
+  it("returns today when resetDay matches today's UTC weekday", () => {
+    const start = getWeekStart(wed, 3); // Wednesday
+    expect(start.getUTCDay()).toBe(3);
+    expect(start.getUTCFullYear()).toBe(2026);
+    expect(start.getUTCMonth()).toBe(2);
+    expect(start.getUTCDate()).toBe(11);
+  });
+
+  it("returns yesterday when resetDay is one day before today", () => {
+    const start = getWeekStart(wed, 2); // Tuesday
+    expect(start.getUTCDay()).toBe(2);
+    expect(start.getUTCDate()).toBe(10);
+  });
+
+  it("returns 6 days back when resetDay is one day after today (wraps a full week)", () => {
+    const start = getWeekStart(wed, 4); // Thursday — week started 6 days ago
+    expect(start.getUTCDay()).toBe(4);
+    expect(start.getUTCDate()).toBe(5); // March 5 is Thursday
+  });
+
+  it("does not mutate the input", () => {
+    const original = wed.getTime();
+    getWeekStart(wed, 0);
+    expect(wed.getTime()).toBe(original);
+  });
+
+  it("preserves UTC midnight (returned date is also at T00:00:00.000Z)", () => {
+    const start = getWeekStart(wed, 1);
+    expect(start.toISOString()).toMatch(/T00:00:00\.000Z$/);
   });
 });
 

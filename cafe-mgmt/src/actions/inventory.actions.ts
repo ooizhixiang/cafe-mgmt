@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { calculateDollarValue } from "@/lib/dollar-attribution";
 import { checkThresholds } from "@/lib/threshold-check";
 import { logError } from "@/lib/log-error";
@@ -157,11 +157,10 @@ export async function getInventoryCounts(): Promise<
     const session = await requireAuth();
     const cafeId = session.user.cafeId;
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
     const ingredients = await prisma.ingredient.findMany({
       where: { cafeId },
@@ -238,8 +237,7 @@ export async function saveInventoryCount(
       return { success: false, error: "Ingredient not found" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     // Check for optimistic concurrency conflict
     const existing = await prisma.inventoryCount.findUnique({
@@ -315,11 +313,10 @@ export async function bulkConfirmUnchanged(
       return { success: false, error: "Invalid input" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
     let confirmed = 0;
 
@@ -429,8 +426,7 @@ export async function createIngredientPurchase(
       return { success: false, error: "Ingredient supplier not found" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const purchase = await prisma.$transaction(async (tx) => {
       const created = await tx.ingredientPurchase.create({
@@ -530,8 +526,7 @@ export async function bulkCreateIngredientPurchases(
     // Resolve "today" (date-only, KL wall clock) for the InventoryCount upsert.
     // Done outside the transaction since clock reads don't need to be
     // transactional and matches the existing convention elsewhere in this file.
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const ingredientIds = lines.map((l) => l.ingredientId);
 

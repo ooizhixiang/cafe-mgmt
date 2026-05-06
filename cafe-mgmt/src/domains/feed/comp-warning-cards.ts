@@ -1,15 +1,6 @@
 import { prisma } from "@/lib/db";
-import { getCafeNow, formatCents } from "@/lib/format";
+import { getCafeToday, getWeekStart, formatCents } from "@/lib/format";
 import type { FeedCard } from "@/types/feed";
-
-function getWeekStart(date: Date, resetDay: number): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const currentDay = d.getDay();
-  const diff = (currentDay - resetDay + 7) % 7;
-  d.setDate(d.getDate() - diff);
-  return d;
-}
 
 export async function getCompWarningCards(
   cafeId: string
@@ -17,8 +8,8 @@ export async function getCompWarningCards(
   const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
   if (!budget) return [];
 
-  const now = getCafeNow();
-  const weekStart = getWeekStart(now, budget.resetDay);
+  const today = getCafeToday();
+  const weekStart = getWeekStart(today, budget.resetDay);
 
   const result = await prisma.compEntry.aggregate({
     where: {

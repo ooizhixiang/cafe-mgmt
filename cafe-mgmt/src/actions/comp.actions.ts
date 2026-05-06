@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday, getWeekStart } from "@/lib/format";
 import { calculateDollarValue } from "@/lib/dollar-attribution";
 import { UNDO_TIMEOUT_MS } from "@/lib/constants";
 import {
@@ -32,21 +32,12 @@ const updateBudgetSchema = z.object({
 
 // ─── Budget Helpers ─────────────────────────────────────────
 
-function getWeekStart(now: Date, resetDay: number): Date {
-  const d = new Date(now);
-  d.setHours(0, 0, 0, 0);
-  const currentDay = d.getDay();
-  const diff = (currentDay - resetDay + 7) % 7;
-  d.setDate(d.getDate() - diff);
-  return d;
-}
-
 async function calculateBudgetRemaining(cafeId: string) {
   const budget = await prisma.compBudget.findUnique({ where: { cafeId } });
   if (!budget) return null;
 
-  const now = getCafeNow();
-  const weekStart = getWeekStart(now, budget.resetDay);
+  const today = getCafeToday();
+  const weekStart = getWeekStart(today, budget.resetDay);
 
   const result = await prisma.compEntry.aggregate({
     where: {

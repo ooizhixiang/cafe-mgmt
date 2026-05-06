@@ -19,6 +19,14 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/format", () => ({
   getCafeNow: () => new Date("2026-04-27T08:00:00Z"),
+  getCafeToday: () => new Date("2026-04-27T00:00:00Z"),
+  getWeekStart: (today: Date, resetDay: number) => {
+    const d = new Date(today);
+    const currentDay = d.getUTCDay();
+    const diff = (currentDay - resetDay + 7) % 7;
+    d.setUTCDate(d.getUTCDate() - diff);
+    return d;
+  },
 }));
 
 import { prisma } from "@/lib/db";

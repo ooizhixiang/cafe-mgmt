@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { calculateDollarValue } from "@/lib/dollar-attribution";
 import { checkThresholds } from "@/lib/threshold-check";
 import { UNDO_TIMEOUT_MS } from "@/lib/constants";
@@ -67,8 +67,7 @@ export async function logWastage(
     }
 
     const dollarValueInCents = calculateDollarValue(ingredient, quantity);
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     // Atomic: create wastage entry + deduct inventory
     const currentCount = await prisma.inventoryCount.findUnique({
@@ -211,8 +210,7 @@ export async function undoWastage(id: string): Promise<ActionResult<void>> {
       return { success: false, error: "Undo window has expired" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     await prisma.$transaction(async (tx) => {
       // Soft-delete the wastage entry
@@ -347,8 +345,7 @@ export async function voidWastage(
       return { success: false, error: "Entry not found" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     await prisma.$transaction(async (tx) => {
       await tx.wastageEntry.update({
@@ -415,8 +412,7 @@ export async function correctWastage(
       return { success: false, error: "Entry not found" };
     }
 
-    const today = getCafeNow();
-    today.setHours(0, 0, 0, 0);
+    const today = getCafeToday();
 
     const quantityDifference = entry.quantity - parsed.data.newQuantity;
     const newDollarValue = calculateDollarValue(entry.ingredient, parsed.data.newQuantity);

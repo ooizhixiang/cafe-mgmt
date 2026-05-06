@@ -1,6 +1,6 @@
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { WastageLogger } from "@/components/wastage/wastage-logger";
 import { WastageLog } from "@/components/wastage/wastage-log";
 import { CompLogger } from "@/components/comp/comp-logger";
@@ -19,8 +19,7 @@ export default async function WastageCompPage({
   const params = await searchParams;
   const tab = params.tab ?? "wastage";
 
-  const today = getCafeNow();
-  today.setHours(0, 0, 0, 0);
+  const today = getCafeToday();
 
   const [ingredients, counts] = await Promise.all([
     prisma.ingredient.findMany({

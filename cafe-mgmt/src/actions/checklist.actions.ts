@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireRole, requireAuth } from "@/lib/auth";
 import { logError } from "@/lib/log-error";
 import { getOrCreateDailyChecklists } from "@/lib/checklist";
+import { getCafeToday } from "@/lib/format";
 import type { ActionResult } from "@/types";
 
 // --- Template Management (Story 2.2) ---
@@ -343,8 +344,10 @@ export async function getChecklistHistory(
     const session = await requireRole("MANAGER");
     const cafeId = session.user.cafeId;
 
-    const since = new Date();
-    since.setDate(since.getDate() - days);
+    // Lower bound built off today's KL calendar date as a UTC-midnight Date
+    // so it matches the `@db.Date` shape Prisma uses for DailyChecklist.date.
+    const since = getCafeToday();
+    since.setUTCDate(since.getUTCDate() - days);
 
     const checklists = await prisma.dailyChecklist.findMany({
       where: {

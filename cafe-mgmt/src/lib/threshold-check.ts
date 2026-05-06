@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 
 /**
  * Check ingredient thresholds and create/resolve FeedAlerts.
@@ -8,8 +8,7 @@ export async function checkThresholds(
   cafeId: string,
   ingredientId?: string
 ) {
-  const today = getCafeNow();
-  today.setHours(0, 0, 0, 0);
+  const today = getCafeToday();
 
   const ingredients = await prisma.ingredient.findMany({
     where: {

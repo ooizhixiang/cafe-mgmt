@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import type { Period } from "@/generated/prisma/enums";
 
 /**
@@ -8,13 +8,9 @@ import type { Period } from "@/generated/prisma/enums";
  * Uses unique constraint (cafeId, date, period) for concurrent safety.
  */
 export async function getOrCreateDailyChecklists(cafeId: string) {
-  const cafeNow = getCafeNow();
-  // Normalize to date only (midnight)
-  const today = new Date(
-    cafeNow.getFullYear(),
-    cafeNow.getMonth(),
-    cafeNow.getDate()
-  );
+  // Today's KL calendar date as a UTC-midnight Date — matches the
+  // `@db.Date` representation Prisma uses for DailyChecklist.date.
+  const today = getCafeToday();
 
   // Check for existing daily checklists
   const existing = await prisma.dailyChecklist.findMany({

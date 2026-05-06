@@ -104,6 +104,39 @@ export function getCafeNow(): Date {
   );
 }
 
+/**
+ * Returns UTC midnight of today's KL calendar date — the canonical
+ * `@db.Date`-shaped value for "today" in the cafe's timezone.
+ *
+ * Why not `getCafeNow()` followed by zeroing out hours/minutes/seconds/ms?
+ * That produces server-local
+ * midnight, not UTC midnight. On a KL (+8) server it is 16h behind today's
+ * UTC date, so Prisma stores `@db.Date` writes one day earlier than intended.
+ * Use this helper for every date-only write or comparison.
+ */
+export function getCafeToday(): Date {
+  const now = getCafeNow();
+  return new Date(
+    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  );
+}
+
+/**
+ * Returns the start of the current week (UTC midnight) given a reference
+ * date and the configured reset day (0 = Sunday … 6 = Saturday).
+ *
+ * Caller passes a UTC-midnight date (typically `getCafeToday()`); the
+ * returned date is also UTC-midnight, suitable for comparison against
+ * `@db.Date` columns.
+ */
+export function getWeekStart(today: Date, resetDay: number): Date {
+  const d = new Date(today);
+  const currentDay = d.getUTCDay();
+  const diff = (currentDay - resetDay + 7) % 7;
+  d.setUTCDate(d.getUTCDate() - diff);
+  return d;
+}
+
 export const DEFAULT_TIME_BOUNDARIES = {
   openingStart: "05:00",
   openingEnd: "09:00",

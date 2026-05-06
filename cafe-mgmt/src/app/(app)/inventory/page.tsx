@@ -1,7 +1,7 @@
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { InventoryList } from "@/components/inventory/inventory-list";
-import { getCafeNow } from "@/lib/format";
+import { getCafeToday } from "@/lib/format";
 import { currentCostPerUnit } from "@/lib/fifo";
 import Link from "next/link";
 
@@ -10,11 +10,10 @@ export default async function InventoryPage() {
   const cafeId = session.user.cafeId;
   const userRole = session.user.role;
 
-  const today = getCafeNow();
-  today.setHours(0, 0, 0, 0);
+  const today = getCafeToday();
 
   const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
   const [ingredients, suppliers, cafeForUnits] = await Promise.all([
     prisma.ingredient.findMany({

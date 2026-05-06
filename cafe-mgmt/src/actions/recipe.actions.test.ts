@@ -16,7 +16,8 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/format", () => ({
-  getCafeNow: vi.fn(),
+  getCafeNow: vi.fn(() => new Date("2026-04-27T08:00:00.000Z")),
+  getCafeToday: vi.fn(() => new Date("2026-04-27T00:00:00.000Z")),
 }));
 
 import { prisma } from "@/lib/db";

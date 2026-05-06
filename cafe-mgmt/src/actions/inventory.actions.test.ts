@@ -767,19 +767,19 @@ describe("bulkCreateIngredientPurchases", () => {
         }),
       })
     );
-    // countDate must be truncated to host-local midnight so it matches the
-    // key the inventory page (and other readers) use. setUTCHours would
-    // produce a non-zero local time on non-UTC hosts and the bumped count
-    // would be invisible to the UI.
+    // countDate must be UTC midnight (the canonical `@db.Date` shape) so it
+    // matches the key the inventory page (and other readers) use. Server-local
+    // midnight on a +tz host would shift to the previous UTC date and the
+    // bumped count would be invisible to the UI.
     const upsertArg = state.countUpsert.mock.calls[0]![0] as {
       where: { ingredientId_countDate: { countDate: Date } };
     };
     const countDate = upsertArg.where.ingredientId_countDate.countDate;
     expect(countDate).toBeInstanceOf(Date);
-    expect(countDate.getHours()).toBe(0);
-    expect(countDate.getMinutes()).toBe(0);
-    expect(countDate.getSeconds()).toBe(0);
-    expect(countDate.getMilliseconds()).toBe(0);
+    expect(countDate.getUTCHours()).toBe(0);
+    expect(countDate.getUTCMinutes()).toBe(0);
+    expect(countDate.getUTCSeconds()).toBe(0);
+    expect(countDate.getUTCMilliseconds()).toBe(0);
   });
 
   it("seeds today's count from yesterday's quantity when no count exists today", async () => {
@@ -920,16 +920,16 @@ describe("createIngredientPurchase", () => {
         }),
       })
     );
-    // Same convention as bulk path: countDate must be host-local midnight.
+    // Same convention as bulk path: countDate must be UTC midnight.
     const upsertArg = countUpsert.mock.calls[0]![0] as {
       where: { ingredientId_countDate: { countDate: Date } };
     };
     const countDate = upsertArg.where.ingredientId_countDate.countDate;
     expect(countDate).toBeInstanceOf(Date);
-    expect(countDate.getHours()).toBe(0);
-    expect(countDate.getMinutes()).toBe(0);
-    expect(countDate.getSeconds()).toBe(0);
-    expect(countDate.getMilliseconds()).toBe(0);
+    expect(countDate.getUTCHours()).toBe(0);
+    expect(countDate.getUTCMinutes()).toBe(0);
+    expect(countDate.getUTCSeconds()).toBe(0);
+    expect(countDate.getUTCMilliseconds()).toBe(0);
   });
 });
 
