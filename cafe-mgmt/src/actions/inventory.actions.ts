@@ -13,7 +13,7 @@ import {
   parseBatchKey,
   type Receipt,
 } from "@/lib/purchase-batch";
-import { dimensionOf } from "@/lib/unit-conversion";
+import { convert, dimensionOf } from "@/lib/unit-conversion";
 import type { ActionResult } from "@/types";
 
 // ─── Schemas ────────────────────────────────────────────────
@@ -421,10 +421,29 @@ export async function createIngredientPurchase(
 
     const link = await prisma.ingredientSupplier.findFirst({
       where: { id: parsed.data.ingredientSupplierId, cafeId },
+      include: { ingredient: { select: { unit: true } } },
     });
     if (!link) {
       return { success: false, error: "Ingredient supplier not found" };
     }
+
+    // Convert the user-entered purchase quantity into the ingredient's storage
+    // unit before save. Storing in the storage unit keeps FIFO consume math
+    // consistent (it operates on raw quantity/remainingQuantity with no unit
+    // awareness). Reject the whole txn if convert() returns null
+    // (cross-dimension or unknown unit).
+    const storageUnit = link.ingredient.unit;
+    const convertedRaw = convert(parsed.data.quantity, parsed.data.unit, storageUnit);
+    if (convertedRaw === null) {
+      throw new Error(
+        `__CONVERT_FAIL__:Cannot convert ${parsed.data.quantity}${parsed.data.unit} to ${storageUnit}`
+      );
+    }
+    // Round to integer — IngredientPurchase.quantity / InventoryCount.quantity
+    // are `Int` columns. convert() can return fractional values for some unit
+    // pairs (e.g. 1 lb → 453.592 g) and float arithmetic on otherwise-clean
+    // pairs can also produce sub-unit residue.
+    const converted = Math.round(convertedRaw);
 
     const today = getCafeToday();
 
@@ -433,9 +452,9 @@ export async function createIngredientPurchase(
         data: {
           ingredientSupplierId: parsed.data.ingredientSupplierId,
           cafeId,
-          quantity: parsed.data.quantity,
-          remainingQuantity: parsed.data.quantity,
-          unit: parsed.data.unit,
+          quantity: converted,
+          remainingQuantity: converted,
+          unit: storageUnit,
           totalPriceInCents: parsed.data.totalPriceInCents,
           createdById: userId,
         },
@@ -463,12 +482,12 @@ export async function createIngredientPurchase(
           ingredientId: link.ingredientId,
           cafeId,
           countDate: today,
-          quantity: baseQty + parsed.data.quantity,
+          quantity: baseQty + converted,
           confirmedById: userId,
           confirmedAt: new Date(),
         },
         update: {
-          quantity: { increment: parsed.data.quantity },
+          quantity: { increment: converted },
         },
       });
 
@@ -479,6 +498,9 @@ export async function createIngredientPurchase(
   } catch (e) {
     if (e instanceof Error && e.message === "Unauthorized") {
       return { success: false, error: "Unauthorized" };
+    }
+    if (e instanceof Error && e.message.startsWith("__CONVERT_FAIL__:")) {
+      return { success: false, error: e.message.slice("__CONVERT_FAIL__:".length) };
     }
     return { success: false, error: "Failed to log purchase" };
   }
@@ -530,6 +552,41 @@ export async function bulkCreateIngredientPurchases(
 
     const ingredientIds = lines.map((l) => l.ingredientId);
 
+    // Pre-fetch storage units for all ingredients so we can pre-validate every
+    // line's conversion BEFORE opening the transaction. All-or-nothing: if any
+    // line fails conversion, the whole bulk action is rejected and zero rows
+    // are written. This avoids partial-DB-state on any conversion failure.
+    const ingredientUnits = await prisma.ingredient.findMany({
+      where: { id: { in: ingredientIds }, cafeId },
+      select: { id: true, unit: true },
+    });
+    const unitByIngredient = new Map(ingredientUnits.map((i) => [i.id, i.unit]));
+
+    const convertedByLine: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const storageUnit = unitByIngredient.get(line.ingredientId);
+      if (!storageUnit) {
+        // Fail-fast: an ingredient absent from the pre-fetch is either
+        // cross-cafe or deleted. Don't fall back to raw values — the
+        // invariant is that stored unit == storage unit.
+        return {
+          success: false,
+          error: `Line ${i + 1}: ingredient ${line.ingredientId} not found in this cafe`,
+        };
+      }
+      const c = convert(line.quantity, line.unit, storageUnit);
+      if (c === null) {
+        return {
+          success: false,
+          error: `Line ${i + 1} (ingredientId ${line.ingredientId}): cannot convert ${line.quantity}${line.unit} to ${storageUnit}`,
+        };
+      }
+      // Round — Prisma `Int` columns reject fractional values that can come
+      // out of unit conversion (e.g. 1 lb → 453.592 g).
+      convertedByLine.push(Math.round(c));
+    }
+
     const ids = await prisma.$transaction(async (tx) => {
       // Pre-load ingredients (cafe-scoped) — reject if any belongs to another cafe
       const ingredients = await tx.ingredient.findMany({
@@ -557,19 +614,28 @@ export async function bulkCreateIngredientPurchases(
 
       const purchaseIds: string[] = [];
 
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
         const existing = linkByIngredient.get(line.ingredientId);
         if (!existing || existing.id !== line.ingredientSupplierId) {
           throw new Error("Ingredient supplier link not found");
         }
 
+        // Use the pre-converted quantity + the ingredient's storage unit so
+        // the row matches what the FIFO consumer expects. Pre-validation above
+        // already fail-fasts when the ingredient is missing from the cafe,
+        // so the lookup is guaranteed to succeed here — the non-null
+        // assertion is documenting that invariant, not papering over it.
+        const converted = convertedByLine[i]!;
+        const storageUnit = unitByIngredient.get(line.ingredientId)!;
+
         const purchase = await tx.ingredientPurchase.create({
           data: {
             ingredientSupplierId: existing.id,
             cafeId,
-            quantity: line.quantity,
-            remainingQuantity: line.quantity,
-            unit: line.unit,
+            quantity: converted,
+            remainingQuantity: converted,
+            unit: storageUnit,
             totalPriceInCents: line.totalPriceInCents,
             createdById: userId,
           },
@@ -600,12 +666,12 @@ export async function bulkCreateIngredientPurchases(
             ingredientId: line.ingredientId,
             cafeId,
             countDate: today,
-            quantity: baseQty + line.quantity,
+            quantity: baseQty + converted,
             confirmedById: userId,
             confirmedAt: new Date(),
           },
           update: {
-            quantity: { increment: line.quantity },
+            quantity: { increment: converted },
           },
         });
       }

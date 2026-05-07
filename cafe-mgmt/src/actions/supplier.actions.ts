@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireAuth, requireRole } from "@/lib/auth";
+import { convert } from "@/lib/unit-conversion";
 import type { ActionResult } from "@/types";
 
 // ─── Schemas ────────────────────────────────────────────────
@@ -215,14 +216,34 @@ export async function logCallOutcome(
     const purchase =
       parsed.data.outcome === "ORDERED" ? parsed.data.purchase : undefined;
 
+    // Pre-validate the purchase: load the supplier link AND the ingredient's
+    // storage unit, then convert the purchase quantity to the storage unit.
+    // Reject before opening the txn if the conversion fails.
+    let convertedPurchase:
+      | { quantity: number; unit: string; ingredientSupplierId: string; totalPriceInCents: number }
+      | null = null;
     if (purchase) {
       const link = await prisma.ingredientSupplier.findFirst({
         where: { id: purchase.ingredientSupplierId, cafeId, supplierId: parsed.data.supplierId },
-        select: { id: true },
+        select: { id: true, ingredient: { select: { unit: true } } },
       });
       if (!link) {
         return { success: false, error: "Ingredient supplier not found" };
       }
+      const storageUnit = link.ingredient.unit;
+      const c = convert(purchase.quantity, purchase.unit, storageUnit);
+      if (c === null) {
+        return {
+          success: false,
+          error: `Cannot convert ${purchase.quantity} ${purchase.unit} to ${storageUnit}`,
+        };
+      }
+      convertedPurchase = {
+        quantity: Math.round(c),
+        unit: storageUnit,
+        ingredientSupplierId: purchase.ingredientSupplierId,
+        totalPriceInCents: purchase.totalPriceInCents,
+      };
     }
 
     await prisma.$transaction(async (tx) => {
@@ -240,15 +261,15 @@ export async function logCallOutcome(
           data: { lastOrderDate: new Date() },
         });
 
-        if (purchase) {
+        if (convertedPurchase) {
           await tx.ingredientPurchase.create({
             data: {
-              ingredientSupplierId: purchase.ingredientSupplierId,
+              ingredientSupplierId: convertedPurchase.ingredientSupplierId,
               cafeId,
-              quantity: purchase.quantity,
-              remainingQuantity: purchase.quantity,
-              unit: purchase.unit,
-              totalPriceInCents: purchase.totalPriceInCents,
+              quantity: convertedPurchase.quantity,
+              remainingQuantity: convertedPurchase.quantity,
+              unit: convertedPurchase.unit,
+              totalPriceInCents: convertedPurchase.totalPriceInCents,
               supplierCallLogId: callLog.id,
               createdById: session.user.id,
             },

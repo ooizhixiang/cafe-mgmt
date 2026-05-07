@@ -573,3 +573,27 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
   - Severity: low (narrow path; commented inline)
 
 - **"(custom)" suffix removed (iter 1, user direction).** Picker no longer labels legacy units with a `(custom)` suffix anywhere — `lbs` shows as just `lbs` even if not in `enabledUnits`. Matches user's explicit instruction; same change applies to `/inventory` inline picker AND the `/ingredients` cell picker since both use the shared `buildPickerOptions`. Trade: legacy/disabled units are no longer visually distinguished from enabled ones in the dropdown.
+
+## From spec-purchase-convert-to-storage-unit (review iteration 1)
+
+- **`__CONVERT_FAIL__:` throw-string error channel is fragile.** `createIngredientPurchase` throws an Error with a magic prefix and the outer catch slices it off to surface a clean message. Works today (the throw is outside the txn). Any future refactor that wraps `convert()` inside the txn would silently roll back and still surface the message — counter-intuitive. Replace with a typed Result object next time we touch this file.
+  - Severity: low (works; latent footgun)
+
+- **Pre-validation race in bulk path.** `prisma.ingredient.findMany` reads storage units BEFORE `$transaction`. A concurrent unit edit between the pre-check and the txn writes purchase rows whose stored `unit` no longer matches the ingredient's actual `unit`. Single-user app → low practical risk, but the invariant ("stored unit == storage unit") is theoretically violable.
+  - Severity: low (concurrency edge in single-user app)
+  - Fix: re-validate inside the txn, or take row-level locks.
+
+- **Backfill script is per-row transactional, not whole-script atomic.** A crash mid-run leaves N rows fixed and M not. The script is idempotent on re-run, BUT today's `InventoryCount` deltas would NOT double-count on retry (already-fixed rows are skipped via the unit-match guard). Acceptable for this round; flag if we ever need to ship a similar backfill at higher row counts.
+  - Severity: low (already ran cleanly; only matters for future similar scripts)
+
+- **Backfill `remainingQuantity` proportional scaling rounds.** When a partially-consumed lot is converted, `remainingQuantity` is scaled proportionally and `Math.round`ed. Edge cases like `quantity=3, remaining=2, converted=1000` round to 667 instead of 666.667 — a phantom 0.333 unit ghost in FIFO. Not triggered by the 5 backfilled rows (none had partial consumption mid-conversion).
+  - Severity: low (real edge but not currently triggered)
+
+- **`LEGACY_INGREDIENT_UNIT_RENAMES` is narrow.** Only handles `ml` → `mL`. Other case/spelling variants (`ML`, `milliliter`, `litre`, `gram`, `KG`, `liter`) are not normalized. If new ingredients land with these, future purchases against them will hit `convert() === null`. Today's data has none of these; expand the map proactively if you import data from elsewhere.
+  - Severity: low (data-dependent)
+
+- **No runtime test for fractional-conversion result with `Math.round`.** All 4 new tests use clean conversions (kg→g, L→mL, identity). A regression that drops the `Math.round` would still pass these tests because their conversions return whole numbers. Add a test for `1 lb → 454 g` (or similar fractional source) when next touching this file.
+  - Severity: low (coverage gap)
+
+- **`ingredient.findMany` empty-array default beforeEach mock + `bindTransaction` mirror.** The implementer added a default empty-array mock and the iter-1 patch mirrors `state.ingredientFindMany` into the prisma-level mock with a `unit ?? "kg"` fallback. Tests that don't set `unit` in their state get `kg` defaults — works for most tests today (they use kg purchases) but is implicit. Document or remove the fallback once tests are updated to be explicit.
+  - Severity: low (test infrastructure clarity)

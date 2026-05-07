@@ -70,6 +70,11 @@ beforeEach(() => {
   // findUnique calls in actions don't return null. Tests that need a specific
   // cafe shape override per-test.
   vi.mocked(prisma.cafe.findUnique).mockResolvedValue({} as never);
+  // Pre-txn ingredient.findMany now runs outside the bulk-purchase txn (used
+  // to look up storage units for the convert() pre-validation). Default to
+  // an empty list so legacy tests that don't mock it still run; per-test
+  // overrides supply real ingredient unit data.
+  vi.mocked(prisma.ingredient.findMany).mockResolvedValue([] as never);
 });
 
 // Test Zod schemas used in inventory actions
@@ -360,6 +365,19 @@ function bindTransaction(state: TxState) {
     };
     return await (cb as (tx: unknown) => Promise<unknown>)(tx);
   }) as never);
+  // Mirror the txn-side ingredient mock to the prisma-level mock used by
+  // bulk pre-validation (which calls `prisma.ingredient.findMany` BEFORE
+  // opening the transaction). Tests that don't supply unit data here will
+  // hit the new fail-fast in pre-validation; the mock backfills `unit: "kg"`
+  // as a sane default since most tests use kg purchases.
+  vi.mocked(prisma.ingredient.findMany).mockImplementation(async () => {
+    const rows = (await state.ingredientFindMany()) as Array<{
+      id: string;
+      name?: string;
+      unit?: string;
+    }>;
+    return rows.map((r) => ({ ...r, unit: r.unit ?? "kg" })) as never;
+  });
 }
 
 describe("bulkCreateIngredientPurchases", () => {
@@ -615,7 +633,9 @@ describe("bulkCreateIngredientPurchases", () => {
     });
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error).toBe("Ingredient not found");
+    // Fail-fast in pre-validation surfaces the specific line + ingredient id
+    // rather than the generic "Ingredient not found" thrown inside the txn.
+    if (!result.success) expect(result.error).toMatch(/not found in this cafe/);
   });
 
   it("rejects empty lines via zod", async () => {
@@ -866,6 +886,8 @@ describe("createIngredientPurchase", () => {
       ingredientId: "ing1",
       supplierId: "sup1",
       cafeId: "cafe-1",
+      // Storage unit matches the purchase unit so convert() is identity (100 → 100).
+      ingredient: { unit: "kg" },
     } as never);
 
     const countFindFirst = vi.fn().mockResolvedValue(null);
@@ -930,6 +952,190 @@ describe("createIngredientPurchase", () => {
     expect(countDate.getUTCMinutes()).toBe(0);
     expect(countDate.getUTCSeconds()).toBe(0);
     expect(countDate.getUTCMilliseconds()).toBe(0);
+  });
+
+  // ─── Unit conversion to ingredient storage unit ──────────
+
+  it("converts purchase quantity to storage unit (1 kg → 1000 g) and bumps inventory by converted value", async () => {
+    // Ingredient stored in `g`; user logs 1 kg. Expected: purchase row uses
+    // converted quantity (1000) and storage unit (g); InventoryCount += 1000.
+    vi.mocked(prisma.ingredientSupplier.findFirst).mockResolvedValue({
+      id: "link1",
+      ingredientId: "ing1",
+      supplierId: "sup1",
+      cafeId: "cafe-1",
+      ingredient: { unit: "g" },
+    } as never);
+
+    const countFindFirst = vi.fn().mockResolvedValue(null);
+    const countUpsert = vi.fn().mockResolvedValue({});
+    const purchaseCreate = vi.fn().mockResolvedValue({ id: "pur1" });
+
+    vi.mocked(prisma.$transaction).mockImplementation((async (cb: unknown) => {
+      if (typeof cb !== "function") return undefined;
+      const tx = {
+        ingredientPurchase: { create: purchaseCreate },
+        inventoryCount: { findFirst: countFindFirst, upsert: countUpsert },
+      };
+      return await (cb as (tx: unknown) => Promise<unknown>)(tx);
+    }) as never);
+
+    const result = await createIngredientPurchase({
+      ingredientSupplierId: "link1",
+      quantity: 1,
+      unit: "kg",
+      totalPriceInCents: 1500,
+    });
+
+    expect(result.success).toBe(true);
+    expect(purchaseCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ingredientSupplierId: "link1",
+          cafeId: "cafe-1",
+          createdById: "user-1",
+          quantity: 1000,
+          remainingQuantity: 1000,
+          unit: "g",
+          totalPriceInCents: 1500,
+        }),
+      })
+    );
+    // InventoryCount upsert uses the converted value, not the raw 1.
+    expect(countUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ quantity: 1000 }),
+        update: expect.objectContaining({ quantity: { increment: 1000 } }),
+      })
+    );
+  });
+
+  it("same-unit purchase (2 each → ingredient stored in each) saves quantity unchanged", async () => {
+    // convert() is identity when from === to; assert no spurious arithmetic.
+    vi.mocked(prisma.ingredientSupplier.findFirst).mockResolvedValue({
+      id: "link1",
+      ingredientId: "ing1",
+      supplierId: "sup1",
+      cafeId: "cafe-1",
+      ingredient: { unit: "each" },
+    } as never);
+
+    const purchaseCreate = vi.fn().mockResolvedValue({ id: "pur1" });
+    vi.mocked(prisma.$transaction).mockImplementation((async (cb: unknown) => {
+      if (typeof cb !== "function") return undefined;
+      const tx = {
+        ingredientPurchase: { create: purchaseCreate },
+        inventoryCount: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({}),
+        },
+      };
+      return await (cb as (tx: unknown) => Promise<unknown>)(tx);
+    }) as never);
+
+    const result = await createIngredientPurchase({
+      ingredientSupplierId: "link1",
+      quantity: 2,
+      unit: "each",
+      totalPriceInCents: 100,
+    });
+
+    expect(result.success).toBe(true);
+    expect(purchaseCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          quantity: 2,
+          remainingQuantity: 2,
+          unit: "each",
+        }),
+      })
+    );
+  });
+});
+
+// ─── bulkCreateIngredientPurchases — convert ──────────────
+
+describe("bulkCreateIngredientPurchases convert pre-validation", () => {
+  it("rejects whole txn when one line is cross-dimension (kg into mL ingredient)", async () => {
+    // 5 lines; line 3 is the cross-dimension one. The action must return
+    // {success:false} and never open the transaction (no DB writes).
+    vi.mocked(prisma.supplier.findFirst).mockResolvedValue({ id: "sup1" } as never);
+    // Pre-fetch returns storage units for all 5 ingredients. Line 3's
+    // ingredient stores in mL; the user is trying to log 1 kg.
+    vi.mocked(prisma.ingredient.findMany).mockResolvedValue([
+      { id: "ing1", unit: "g" },
+      { id: "ing2", unit: "g" },
+      { id: "ing3", unit: "mL" }, // mismatched dimension vs `kg`
+      { id: "ing4", unit: "g" },
+      { id: "ing5", unit: "g" },
+    ] as never);
+
+    const result = await bulkCreateIngredientPurchases({
+      supplierId: "sup1",
+      lines: [
+        { ingredientId: "ing1", ingredientSupplierId: "link1", quantity: 1, unit: "kg", totalPriceInCents: 100 },
+        { ingredientId: "ing2", ingredientSupplierId: "link2", quantity: 1, unit: "kg", totalPriceInCents: 100 },
+        { ingredientId: "ing3", ingredientSupplierId: "link3", quantity: 1, unit: "kg", totalPriceInCents: 100 },
+        { ingredientId: "ing4", ingredientSupplierId: "link4", quantity: 1, unit: "kg", totalPriceInCents: 100 },
+        { ingredientId: "ing5", ingredientSupplierId: "link5", quantity: 1, unit: "kg", totalPriceInCents: 100 },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // Error message names the failing line and ingredient id.
+      expect(result.error).toMatch(/Line 3/);
+      expect(result.error).toMatch(/ing3/);
+    }
+    // Critical: transaction is NEVER opened on conversion failure.
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("InventoryCount upsert uses converted value (1 L → 1000 mL), not raw", async () => {
+    // Bulk path; ingredient stored in mL; user logs 1 L → expect 1000 mL bump.
+    vi.mocked(prisma.supplier.findFirst).mockResolvedValue({ id: "sup1" } as never);
+
+    // The unit lives in the txn-state mock — bindTransaction mirrors it
+    // into the prisma-level mock that pre-validation reads from.
+    const state = makeTxState({
+      ingredientFindMany: vi.fn().mockResolvedValue([{ id: "ingMilk", name: "Oat Milk", unit: "mL" }]),
+      linkFindMany: vi.fn().mockResolvedValue([
+        { id: "linkMilk", ingredientId: "ingMilk", supplierId: "sup1", cafeId: "cafe-1" },
+      ]),
+      purchaseCreate: vi.fn().mockResolvedValue({ id: "pur1" }),
+      countFindFirst: vi.fn().mockResolvedValue(null),
+    });
+    bindTransaction(state);
+
+    const result = await bulkCreateIngredientPurchases({
+      supplierId: "sup1",
+      lines: [
+        {
+          ingredientId: "ingMilk",
+          ingredientSupplierId: "linkMilk",
+          quantity: 1,
+          unit: "L",
+          totalPriceInCents: 600,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(state.purchaseCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          quantity: 1000,
+          remainingQuantity: 1000,
+          unit: "mL",
+        }),
+      })
+    );
+    expect(state.countUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ quantity: 1000 }),
+        update: expect.objectContaining({ quantity: { increment: 1000 } }),
+      })
+    );
   });
 });
 
