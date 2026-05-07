@@ -188,6 +188,11 @@ export function InventoryList({
   // when the user clicks "Recipes" on a different ingredient before the
   // first request resolves. Without this, A's response can land on B's dialog.
   const recipesDialogReqRef = useRef(0);
+  // Per-ingredient request counter for inline unit changes. Lets us suppress
+  // a stale revert when a later change has already been issued — without it,
+  // a failing earlier request could clobber a successful later optimistic
+  // update.
+  const unitChangeReqRef = useRef<Map<string, number>>(new Map());
   const { toast } = useToast();
 
   const categories = [
@@ -204,6 +209,34 @@ export function InventoryList({
   const unchangedIds = ingredients
     .filter((i) => i.todayCount === null && i.previousCount !== null)
     .map((i) => i.id);
+
+  function handleInlineUnitChange(ing: IngredientCount, newUnit: string) {
+    if (newUnit === ing.unit) return;
+    const previousUnit = ing.unit;
+    const reqId = (unitChangeReqRef.current.get(ing.id) ?? 0) + 1;
+    unitChangeReqRef.current.set(ing.id, reqId);
+    // Optimistic update
+    setIngredients((prev) =>
+      prev.map((i) => (i.id === ing.id ? { ...i, unit: newUnit } : i))
+    );
+    startTransition(async () => {
+      let result: { success: true } | { success: false; error: string };
+      try {
+        result = await updateIngredient(ing.id, ing.name, newUnit);
+      } catch {
+        result = { success: false, error: "Failed to update unit" };
+      }
+      // Suppress stale reverts: only act if this is still the latest request
+      // for this ingredient. A later change may have superseded us.
+      if (unitChangeReqRef.current.get(ing.id) !== reqId) return;
+      if (!result.success) {
+        toast(result.error || "Failed to update unit");
+        setIngredients((prev) =>
+          prev.map((i) => (i.id === ing.id ? { ...i, unit: previousUnit } : i))
+        );
+      }
+    });
+  }
 
   function startEdit(ing: IngredientCount) {
     setEditingId(ing.id);
@@ -541,7 +574,18 @@ export function InventoryList({
                     >
                       {ing.name}
                     </button>
-                    <span className="text-meta text-[var(--text-secondary)]">({ing.unit})</span>
+                    {isManager ? (
+                      <UnitPicker
+                        value={ing.unit}
+                        onChange={(newUnit) => handleInlineUnitChange(ing, newUnit)}
+                        enabledUnits={enabledUnits}
+                        disabled={isPending}
+                        ariaLabel={`Unit for ${ing.name}`}
+                        className="text-meta text-[var(--text-secondary)] bg-transparent border border-[var(--border-default)] rounded px-1 py-0 disabled:opacity-50"
+                      />
+                    ) : (
+                      <span className="text-meta text-[var(--text-secondary)]">({ing.unit})</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-[var(--space-1)] shrink-0">
                     {isConfirmed && (

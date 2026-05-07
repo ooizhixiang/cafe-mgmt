@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { getRecipesForIngredient } from "@/actions/inventory.actions";
+import { updateIngredient } from "@/actions/setup.actions";
 
 // Mock server actions used by the list. The chip rendering doesn't call any of
 // these — the mocks just keep the module import graph happy.
@@ -141,6 +142,82 @@ describe("InventoryList — inline supplier chips", () => {
     );
 
     expect(screen.queryByTestId("inline-supplier-chips-ing-1")).toBeNull();
+  });
+});
+
+describe("InventoryList — inline unit picker", () => {
+  it("manager view renders a unit <select> per row populated with enabledUnits and the current value preselected", () => {
+    const ing = makeIngredient({ id: "ing-1", name: "Milk", unit: "mL" });
+
+    render(
+      <InventoryList
+        initialIngredients={[ing]}
+        suppliers={[]}
+        userRole="MANAGER"
+        enabledUnits={["g", "kg", "mL", "L", "each"]}
+      />
+    );
+
+    const select = screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement;
+    expect(select).toBeDefined();
+    expect(select.value).toBe("mL");
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual(expect.arrayContaining(["g", "kg", "mL", "L", "each"]));
+  });
+
+  it("reverts the unit display + toasts when updateIngredient returns success:false", async () => {
+    vi.mocked(updateIngredient).mockResolvedValueOnce({ success: false, error: "Unauthorized" });
+
+    const ing = makeIngredient({ id: "ing-1", name: "Milk", unit: "mL" });
+
+    render(
+      <InventoryList
+        initialIngredients={[ing]}
+        suppliers={[]}
+        userRole="MANAGER"
+        enabledUnits={["g", "kg", "mL", "L", "each"]}
+      />
+    );
+
+    const select = screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "L" } });
+
+    await waitFor(() => {
+      expect(vi.mocked(updateIngredient)).toHaveBeenCalledWith("ing-1", "Milk", "L");
+    });
+    // Revert: select value returns to the previous unit after the failure resolves.
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement).value
+      ).toBe("mL");
+    });
+  });
+
+  it("changing the unit calls updateIngredient(id, name, newUnit) and updates the row's display optimistically", async () => {
+    vi.mocked(updateIngredient).mockResolvedValueOnce({ success: true, data: undefined });
+
+    const ing = makeIngredient({ id: "ing-1", name: "Milk", unit: "mL" });
+
+    render(
+      <InventoryList
+        initialIngredients={[ing]}
+        suppliers={[]}
+        userRole="MANAGER"
+        enabledUnits={["g", "kg", "mL", "L", "each"]}
+      />
+    );
+
+    const select = screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "L" } });
+
+    await waitFor(() => {
+      expect(vi.mocked(updateIngredient)).toHaveBeenCalledWith("ing-1", "Milk", "L");
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement).value
+      ).toBe("L");
+    });
   });
 });
 

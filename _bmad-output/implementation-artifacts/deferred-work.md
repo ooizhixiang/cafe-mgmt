@@ -521,3 +521,33 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
   - **Loading state**: no test verifies the dialog renders the "Loading..." line during the in-flight fetch.
   - **Race condition (stale-response discard)**: no test for the request-id guard added in iteration 1.
   - Severity: low (each gap is small, but they cover real edges)
+
+## From spec-inventory-inline-unit-picker (review iteration 1)
+
+- **HIGH: `updateIngredient` action has no guards against unit-change-induced data corruption.** Pre-existing flaw exposed more prominently by this spec. When a manager flips an in-use ingredient's unit (e.g. Milk from `mL` → `L`):
+  - `RecipeIngredient.quantityPerServing` rows are reinterpreted in the new unit. A recipe storing "200 mL" silently means "200 L" after the flip → **1000× over-deduction** at next sale.
+  - `InventoryCount.quantity` values keep their numeric value but now refer to a different unit → bogus stock display.
+  - `IngredientPurchase.unit` and FIFO `LotConsumption` rows are NOT updated → FIFO consumes lot quantities under wrong semantics; cost-per-unit math becomes nonsensical.
+  - `Ingredient.costPerUnitInCents` is dollars per stored unit; flipping unit silently breaks the cost basis → recipe costing and margin dashboards lie.
+  - The action does NOT validate `unit` against `cafe.enabledUnits` either — DOM tampering can submit any string, stored as `(custom)` in pickers.
+  - Severity: high (silent corruption, but only triggers when a manager actually changes a unit on an in-use ingredient — likely rare in practice for this app)
+  - Fix: in `updateIngredient`, when `unit` differs from the stored value, gate based on usage:
+    1. Reject if `RecipeIngredient.count > 0` OR `InventoryCount.count > 0` OR `IngredientPurchase.count > 0` with explanatory error
+    2. OR auto-convert all dependent quantities atomically (more complex; risk of rounding traps)
+    3. AND validate the new unit is in `cafe.enabledUnits` (or matches the existing stored value, allowing no-op)
+    4. AND reject cross-dimension flips (mass ↔ volume) via `dimensionOf()`
+
+- **`disabled={isPending}` on the unit picker disables every row's picker globally.** `isPending` from the shared `useTransition` is module-wide, so editing one row freezes pickers across the whole list (and any other transition consumer in this component). With the iter-1 race-guard already discarding stale reverts, the disable is also less load-bearing. Drop the `disabled` or scope it per-row.
+  - Severity: low (UX nuisance, not a defect)
+
+- **No `revalidatePath('/inventory')` on success.** After a successful unit change, cost displays / displayUnit hints / recipe-cost panels elsewhere on the page stay stale until full reload. Either call `revalidatePath` inside `updateIngredient` (server side) or `router.refresh()` after success on the client.
+  - Severity: low (minor staleness)
+
+- **Test coverage gaps:**
+  - No-op when `newUnit === current` — the early return is uncovered.
+  - Legacy/(custom) option rendering when stored unit is not in `enabledUnits` — covered indirectly via `buildPickerOptions` but not asserted in this test file.
+  - Race-condition test for the new request-id ref — would be brittle to write but covers the iter-1 fix.
+  - Severity: low (each gap is small)
+
+- **Optimistic-update collision with edit-form typing.** If a manager opens the inline edit form (which seeds `editForm` from `ingredients`) AND simultaneously changes the unit picker, the optimistic `setIngredients` mutation can desync the open editForm's `unit` field. Rare interleaving.
+  - Severity: low (real edge, low probability)
