@@ -54,20 +54,22 @@ test.describe("Full Smoke Test", () => {
     await page.waitForTimeout(2000);
 
     await page.getByLabel("New ingredient name").fill("Coffee Beans");
-    await page.getByLabel("New ingredient unit").fill("gm");
+    await page.getByLabel("New ingredient unit").selectOption("g");
+    await page.getByLabel("New ingredient category").selectOption("Unassigned");
     await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
-    // Wait for previous add to clear the name input before next fill
     await expect(page.getByLabel("New ingredient name")).toHaveValue("");
 
     await page.getByLabel("New ingredient name").fill("Milk");
-    await page.getByLabel("New ingredient unit").fill("ml");
+    await page.getByLabel("New ingredient unit").selectOption("mL");
+    await page.getByLabel("New ingredient category").selectOption("Unassigned");
     await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
     await expect(page.getByLabel("New ingredient name")).toHaveValue("");
 
     await page.getByLabel("New ingredient name").fill("Sugar");
-    await page.getByLabel("New ingredient unit").fill("gm");
+    await page.getByLabel("New ingredient unit").selectOption("g");
+    await page.getByLabel("New ingredient category").selectOption("Unassigned");
     await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.waitForTimeout(2000);
 
@@ -83,7 +85,7 @@ test.describe("Full Smoke Test", () => {
     // Add ingredient to Original
     await page.click('text="+ Add ingredient"');
     await page.waitForTimeout(500);
-    await page.selectOption("select", { label: "Coffee Beans (gm)" });
+    await page.selectOption("select", { label: "Coffee Beans (g)" });
     await page.locator('input[type="number"][min="1"]').first().fill("18");
     await page.locator('button:has-text("Add"):not([disabled])').first().click();
     await page.waitForTimeout(2000);
