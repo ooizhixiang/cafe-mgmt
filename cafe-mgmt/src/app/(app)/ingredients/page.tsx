@@ -1,50 +1,60 @@
-import { requireRole } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { IngredientSpreadsheet } from "@/components/ingredients/ingredient-spreadsheet";
+import { MergedIngredientsPage } from "@/components/ingredients/merged-ingredients-page";
 import { currentCostPerUnit, findOldestNonEmptyLot } from "@/lib/fifo";
+import { getCafeToday } from "@/lib/format";
 
 export default async function IngredientsPage() {
-  const session = await requireRole("MANAGER");
+  const session = await requireAuth();
+  const cafeId = session.user.cafeId;
+  const userRole = session.user.role;
 
+  const today = getCafeToday();
+  const yesterday = new Date(today);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+  // Load both datasets unconditionally — the page must support both views
+  // (spreadsheet for managers, count for everyone) and the queries are fast +
+  // overlap heavily. Toggling client-side is then instant.
   const [ingredientsRaw, suppliers, cafe] = await Promise.all([
     prisma.ingredient.findMany({
-      where: { cafeId: session.user.cafeId },
+      where: { cafeId },
       orderBy: [{ isPinned: "desc" }, { displayOrder: "asc" }],
-      select: {
-        id: true,
-        name: true,
-        unit: true,
-        displayUnit: true,
-        costPerUnitInCents: true,
-        snapIncrement: true,
-        containerProfile: true,
-        category: true,
-        lowStockThreshold: true,
-        unitsPerContainer: true,
-        isPinned: true,
-        manualCostOverride: true,
+      include: {
         ingredientSuppliers: {
           include: { supplier: { select: { id: true, name: true } } },
+        },
+        inventoryCounts: {
+          where: { countDate: { in: [today, yesterday] } },
+          orderBy: { countDate: "desc" },
         },
       },
     }),
     prisma.supplier.findMany({
-      where: { cafeId: session.user.cafeId },
+      where: { cafeId },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
     prisma.cafe.findUnique({
-      where: { id: session.user.cafeId },
+      where: { id: cafeId },
       select: { enabledUnits: true },
     }),
   ]);
+
+  const enabledUnits = cafe?.enabledUnits ?? [];
+
+  // No early empty-state branch: when ingredientsRaw is empty, fall through
+  // to MergedIngredientsPage with empty arrays. The Spreadsheet view's
+  // bottom add-row is the manager's add affordance; the Count view's empty
+  // state already exists inside InventoryList. The previous early-return
+  // bypassed the toggle entirely and linked to the same URL (dead-end).
 
   const supplierLinkIds = ingredientsRaw.flatMap((i) =>
     i.ingredientSuppliers.map((l) => l.id)
   );
 
   const purchases =
-    ingredientsRaw.length === 0 || supplierLinkIds.length === 0
+    supplierLinkIds.length === 0
       ? []
       : await prisma.ingredientPurchase.findMany({
           where: { ingredientSupplierId: { in: supplierLinkIds } },
@@ -96,7 +106,10 @@ export default async function IngredientsPage() {
     });
   }
 
-  const ingredients = ingredientsRaw.map((ing) => {
+  const todayKey = today.toISOString().slice(0, 10);
+  const yesterdayKey = yesterday.toISOString().slice(0, 10);
+
+  const spreadsheetIngredients = ingredientsRaw.map((ing) => {
     const oldestLot = findOldestNonEmptyLot(
       purchasesByIngredient.get(ing.id) ?? []
     );
@@ -145,19 +158,80 @@ export default async function IngredientsPage() {
     };
   });
 
-  return (
-    <div className="p-[var(--space-4)] pt-[var(--space-6)] lg:p-8 lg:pt-10 lg:max-w-[1280px] lg:mx-auto">
-      <h1 className="text-headline mb-[var(--space-1)]">Ingredients</h1>
-      <p className="text-meta text-[var(--text-secondary)] mb-[var(--space-4)]">
-        Set costs, thresholds, snap increments, and categories for each ingredient.
-      </p>
+  const inventoryIngredients = ingredientsRaw.map((ing) => {
+    const todayEntry = ing.inventoryCounts.find(
+      (c) => c.countDate.toISOString().slice(0, 10) === todayKey
+    );
+    const yesterdayEntry = ing.inventoryCounts.find(
+      (c) => c.countDate.toISOString().slice(0, 10) === yesterdayKey
+    );
 
-      <IngredientSpreadsheet
-        initialIngredients={ingredients}
-        suppliers={suppliers}
-        distinctCategories={distinctCategories}
-        enabledUnits={cafe?.enabledUnits ?? []}
-      />
-    </div>
+    const oldestLot = findOldestNonEmptyLot(
+      purchasesByIngredient.get(ing.id) ?? []
+    );
+    const rawCost =
+      ing.costPerUnitInCents === null ? null : ing.costPerUnitInCents.toNumber();
+    const derivedCost = currentCostPerUnit(
+      {
+        manualCostOverride: ing.manualCostOverride,
+        costPerUnitInCents: rawCost,
+      },
+      oldestLot
+    );
+
+    return {
+      id: ing.id,
+      name: ing.name,
+      unit: ing.unit,
+      displayUnit: ing.displayUnit,
+      category: ing.category,
+      isPinned: ing.isPinned,
+      snapIncrement: ing.snapIncrement,
+      containerProfile: ing.containerProfile,
+      costPerUnitInCents: rawCost,
+      derivedCostPerUnitInCents: derivedCost,
+      unitsPerContainer: ing.unitsPerContainer,
+      lowStockThreshold: ing.lowStockThreshold,
+      ingredientSuppliers: ing.ingredientSuppliers.map((link) => ({
+        id: link.id,
+        supplierId: link.supplierId,
+        supplierName: link.supplier.name,
+        priceInCents: link.priceInCents.toNumber(),
+        unit: link.unit,
+      })),
+      ingredientPurchases: purchases
+        .filter((p) => p.ingredientSupplier.ingredientId === ing.id)
+        .map((p) => ({
+          id: p.id,
+          ingredientSupplierId: p.ingredientSupplierId,
+          supplierName: p.ingredientSupplier.supplier.name,
+          quantity: p.quantity,
+          remainingQuantity: p.remainingQuantity,
+          unit: p.unit,
+          totalPriceInCents: p.totalPriceInCents.toNumber(),
+          createdAt: p.createdAt.toISOString(),
+        })),
+      todayCount: todayEntry?.quantity ?? null,
+      todayUpdatedAt: todayEntry?.updatedAt.toISOString() ?? null,
+      previousCount: yesterdayEntry?.quantity ?? null,
+    };
+  });
+
+  return (
+    <MergedIngredientsPage
+      userRole={userRole}
+      spreadsheetProps={{
+        initialIngredients: spreadsheetIngredients,
+        suppliers,
+        distinctCategories,
+        enabledUnits,
+      }}
+      inventoryListProps={{
+        initialIngredients: inventoryIngredients,
+        suppliers,
+        userRole,
+        enabledUnits,
+      }}
+    />
   );
 }

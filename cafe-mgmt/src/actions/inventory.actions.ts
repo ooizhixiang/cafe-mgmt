@@ -984,8 +984,7 @@ export async function updateIngredientDisplayUnit(
       where: { id: parsed.data.ingredientId },
       data: { displayUnit: normalized },
     });
-    // Inventory + ingredients pages both surface the display unit.
-    revalidatePath("/inventory");
+    // The merged ingredients page surfaces the display unit (both views).
     revalidatePath("/ingredients");
     return { success: true, data: { displayUnit: normalized } };
   } catch (e) {

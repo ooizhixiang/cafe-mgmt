@@ -597,3 +597,25 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **`ingredient.findMany` empty-array default beforeEach mock + `bindTransaction` mirror.** The implementer added a default empty-array mock and the iter-1 patch mirrors `state.ingredientFindMany` into the prisma-level mock with a `unit ?? "kg"` fallback. Tests that don't set `unit` in their state get `kg` defaults — works for most tests today (they use kg purchases) but is implicit. Document or remove the fallback once tests are updated to be explicit.
   - Severity: low (test infrastructure clarity)
+
+## From spec-merge-inventory-into-ingredients (review iteration 1)
+
+- **Staff over-fetching on `/ingredients`.** Page loads spreadsheet-only data (`ingredientSuppliers`, `suppliers`, `purchases`, derived `distinctCategories` and `spreadsheetIngredients` cost rollups) unconditionally. Staff never see the spreadsheet view but the server still serializes those payloads into the RSC response. Wasted bandwidth + DB work on the most-used role.
+  - Severity: low (works; perf nit on the staff-heavy hot path)
+  - Fix: gate the spreadsheet-only data fetches behind `if (userRole === "MANAGER")`; keep loading the count-view dataset always.
+
+- **First-paint flash for managers whose stored preference is Count.** `merged-ingredients-page.tsx` defaults the view to `"spreadsheet"` server-side then a `useEffect` reads localStorage and may swap to `"count"`. Manager who prefers Count sees the heavy spreadsheet flash for one frame on every navigation.
+  - Severity: low (cosmetic; happens once per nav)
+  - Fix: persist the preference in a cookie that the server reads to set the initial view, OR render a brief skeleton until the localStorage hydration runs.
+
+- **`aria-pressed` two-button toggle is a known a11y anti-pattern.** Should be a `role="radiogroup"` with `role="radio"` children for a single-select view toggle. Same flaw exists on the existing "Show advanced columns" toggle in the spreadsheet header.
+  - Severity: low (a11y polish; consistent with other toggles in the app)
+
+- **localStorage corrupt-value handling.** Invalid values (anything other than `"count"` / `"spreadsheet"`) silently fall back to default — no cleanup. Stale/garbage values persist indefinitely.
+  - Severity: low (defensive nit)
+
+- **Toggling between views unmounts/remounts the heavy child component.** Any in-progress optimistic state in `InventoryList` (mid-count) or `IngredientSpreadsheet` (mid-cell-edit) is silently lost on toggle. Acceptable for a deliberate user toggle; flag if it ever becomes annoying.
+  - Severity: low (expected for a toggle)
+
+- **Test for click-persistence (writing localStorage on toggle) missing.** Existing 4 tests cover read-side hydration; no test asserts that clicking the toggle writes the new value. Easy to add when next touching this file.
+  - Severity: low (coverage gap)

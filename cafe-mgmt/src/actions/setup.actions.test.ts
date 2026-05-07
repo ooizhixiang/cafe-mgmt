@@ -314,7 +314,6 @@ describe("setCafeEnabledUnits", () => {
     expect(calls).toContain("/settings");
     expect(calls).toContain("/purchases");
     expect(calls).toContain("/ingredients");
-    expect(calls).toContain("/inventory");
     expect(calls).toContain("/suppliers");
     // Dynamic route uses the "page" type for Next's path matcher
     expect(calls).toContain("/suppliers/[id]");

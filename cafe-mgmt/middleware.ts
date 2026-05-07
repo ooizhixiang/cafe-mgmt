@@ -2,7 +2,10 @@ import { auth } from "./auth";
 import { NextResponse } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/register", "/invite", "/forgot-password", "/reset-password"];
-const MANAGER_ONLY_PATHS = ["/settings", "/inventory", "/ingredients"];
+// `/inventory` is gone (route deleted); `/ingredients` is now the merged
+// page that staff can also visit (Count view) — page-level role gating
+// happens inside the page, not in middleware.
+const MANAGER_ONLY_PATHS = ["/settings"];
 const SETUP_PATHS = ["/setup"];
 
 export default auth((req) => {

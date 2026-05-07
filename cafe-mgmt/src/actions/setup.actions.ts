@@ -619,7 +619,6 @@ export async function setCafeEnabledUnits(
     revalidatePath("/settings");
     revalidatePath("/purchases");
     revalidatePath("/ingredients");
-    revalidatePath("/inventory");
     revalidatePath("/suppliers");
     revalidatePath("/suppliers/[id]", "page");
     return { success: true, data: { enabledUnits: updated.enabledUnits } };

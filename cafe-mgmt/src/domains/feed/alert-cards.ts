@@ -25,7 +25,7 @@ export async function getAlertCards(cafeId: string): Promise<FeedCard[]> {
       type: alert.type,
       ingredientId: alert.ingredientId,
       ingredientName: alert.ingredient?.name,
-      actionRoute: "/inventory",
+      actionRoute: "/ingredients",
     },
     createdAt: alert.createdAt.toISOString(),
   }));

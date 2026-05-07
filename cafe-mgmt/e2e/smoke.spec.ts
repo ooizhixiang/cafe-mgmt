@@ -28,7 +28,8 @@ test.describe("Full Smoke Test", () => {
     await expect(page.getByText("Welcome back")).toBeVisible();
 
     // ─── 3. Navigate all tabs ───────────────────────────────
-    await page.goto("/inventory");
+    // /inventory was merged into /ingredients; nav still labels it "Inventory".
+    await page.goto("/ingredients");
     await expect(page.locator("h1")).toContainText("Inventory", { timeout: 10000 });
 
     await page.goto("/wastage");
