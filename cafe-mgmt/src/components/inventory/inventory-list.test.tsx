@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
+import { getRecipesForIngredient } from "@/actions/inventory.actions";
 
 // Mock server actions used by the list. The chip rendering doesn't call any of
 // these — the mocks just keep the module import graph happy.
@@ -43,6 +44,7 @@ function makeIngredient(
     id: overrides.id ?? "ing-1",
     name: overrides.name ?? "Coffee",
     unit: overrides.unit ?? "kg",
+    displayUnit: null,
     category: null,
     isPinned: false,
     snapIncrement: null,
@@ -139,5 +141,92 @@ describe("InventoryList — inline supplier chips", () => {
     );
 
     expect(screen.queryByTestId("inline-supplier-chips-ing-1")).toBeNull();
+  });
+});
+
+describe("InventoryList — View Recipes button", () => {
+  it("clicking View Recipes calls getRecipesForIngredient with the row's id and opens the dialog", async () => {
+    vi.mocked(getRecipesForIngredient).mockResolvedValueOnce({
+      success: true,
+      data: [],
+    });
+
+    const ing = makeIngredient({ id: "ing-42", name: "Milk", unit: "ml" });
+
+    render(
+      <InventoryList
+        initialIngredients={[ing]}
+        suppliers={[]}
+        userRole="MANAGER"
+      />
+    );
+
+    const button = screen.getByRole("button", { name: /View recipes using Milk/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(vi.mocked(getRecipesForIngredient)).toHaveBeenCalledWith("ing-42");
+    });
+
+    // Dialog opens — title should be present.
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /Recipes using Milk/i })).toBeDefined();
+    });
+  });
+
+  it("renders recipe names with variation suffixes when present, and the empty state when [] is returned", async () => {
+    // Case 1: list with variations.
+    vi.mocked(getRecipesForIngredient).mockResolvedValueOnce({
+      success: true,
+      data: [
+        { id: "r1", name: "Cafe Latte", quantityPerServing: 200, variationName: null },
+        { id: "r2", name: "Cappuccino", quantityPerServing: 150, variationName: "Hot" },
+      ],
+    });
+
+    const ing = makeIngredient({ id: "ing-42", name: "Milk", unit: "ml" });
+
+    const { unmount } = render(
+      <InventoryList
+        initialIngredients={[ing]}
+        suppliers={[]}
+        userRole="MANAGER"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /View recipes using Milk/i }));
+
+    await waitFor(() => {
+      const dialog = screen.getByRole("dialog", { name: /Recipes using Milk/i });
+      expect(within(dialog).getByText("Cafe Latte")).toBeDefined();
+      expect(within(dialog).getByText("Cappuccino (Hot)")).toBeDefined();
+      expect(within(dialog).getByText("200 ml/serving")).toBeDefined();
+      expect(within(dialog).getByText("150 ml/serving")).toBeDefined();
+    });
+
+    unmount();
+
+    // Case 2: empty list shows the empty state.
+    vi.mocked(getRecipesForIngredient).mockResolvedValueOnce({
+      success: true,
+      data: [],
+    });
+
+    const emptyIng = makeIngredient({ id: "ing-99", name: "Vanilla", unit: "ml" });
+
+    render(
+      <InventoryList
+        initialIngredients={[emptyIng]}
+        suppliers={[]}
+        userRole="MANAGER"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /View recipes using Vanilla/i }));
+
+    await waitFor(() => {
+      const dialog = screen.getByRole("dialog", { name: /Recipes using Vanilla/i });
+      expect(within(dialog).getByText("Not used in any recipe")).toBeDefined();
+    });
   });
 });

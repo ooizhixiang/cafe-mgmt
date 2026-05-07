@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { saveInventoryCount, bulkConfirmUnchanged, updateIngredientConfig, getRecipesForIngredient } from "@/actions/inventory.actions";
 import { addIngredient, updateIngredient, deleteIngredient } from "@/actions/setup.actions";
 import { formatCents } from "@/lib/format";
@@ -12,12 +12,13 @@ import {
   convert,
   formatConvertedQuantity,
 } from "@/lib/unit-conversion";
-import { Minus, Plus, Check, Pencil, Trash2, Star } from "lucide-react";
+import { Minus, Plus, Check, Pencil, Trash2, Star, List } from "lucide-react";
 import {
   IngredientSuppliersPanel,
   type IngredientSupplierRow,
   type IngredientPurchaseRow,
 } from "@/components/ingredients/ingredient-suppliers-panel";
+import { RecipesUsingDialog } from "./recipes-using-dialog";
 
 interface IngredientCount {
   id: string;
@@ -180,7 +181,13 @@ export function InventoryList({
   const [search, setSearch] = useState("");
   const [expandedIngId, setExpandedIngId] = useState<string | null>(null);
   const [showSuppliersFor, setShowSuppliersFor] = useState<string | null>(null);
-  const [linkedRecipes, setLinkedRecipes] = useState<Array<{ id: string; name: string; quantityPerServing: number; variationName: string | null }>>([]);
+  const [recipesDialogIng, setRecipesDialogIng] = useState<{ id: string; name: string; unit: string } | null>(null);
+  const [recipesDialogList, setRecipesDialogList] = useState<Array<{ id: string; name: string; quantityPerServing: number; variationName: string | null }>>([]);
+  const [recipesDialogLoading, setRecipesDialogLoading] = useState(false);
+  // Monotonic id used to discard stale `getRecipesForIngredient` responses
+  // when the user clicks "Recipes" on a different ingredient before the
+  // first request resolves. Without this, A's response can land on B's dialog.
+  const recipesDialogReqRef = useRef(0);
   const { toast } = useToast();
 
   const categories = [
@@ -529,9 +536,6 @@ export function InventoryList({
                           setExpandedIngId(null);
                         } else {
                           setExpandedIngId(ing.id);
-                          getRecipesForIngredient(ing.id).then((r) => {
-                            if (r.success) setLinkedRecipes(r.data);
-                          });
                         }
                       }}
                     >
@@ -545,6 +549,32 @@ export function InventoryList({
                         Counted
                       </span>
                     )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const reqId = ++recipesDialogReqRef.current;
+                        // Reset list now so stale results from a prior open don't
+                        // briefly render under the new ingredient's title.
+                        setRecipesDialogList([]);
+                        setRecipesDialogIng({ id: ing.id, name: ing.name, unit: ing.unit });
+                        setRecipesDialogLoading(true);
+                        const r = await getRecipesForIngredient(ing.id);
+                        // Discard if a later click superseded this request.
+                        if (reqId !== recipesDialogReqRef.current) return;
+                        if (r.success) {
+                          setRecipesDialogList(r.data);
+                        } else {
+                          toast(r.error);
+                          setRecipesDialogIng(null);
+                        }
+                        setRecipesDialogLoading(false);
+                      }}
+                      className="touch-target px-[var(--space-1)] py-1 text-meta text-[var(--color-info)] font-medium flex items-center gap-1"
+                      aria-label={`View recipes using ${ing.name}`}
+                    >
+                      <List size={14} />
+                      <span>Recipes</span>
+                    </button>
                     <button
                       onClick={() => startEdit(ing)}
                       className="touch-target p-1 text-[var(--text-secondary)]"
@@ -641,57 +671,34 @@ export function InventoryList({
                   disabled={isPending}
                 />
 
-                {/* Row 5: Used in recipes */}
+                {/* Row 5: Suppliers (keep row-expansion mechanism for this sub-feature) */}
                 {expandedIngId === ing.id && (
                   <div className="mt-[var(--space-2)] pt-[var(--space-2)] border-t border-[var(--border-default)]">
-                    <p className="text-meta font-semibold text-[var(--text-secondary)] mb-[var(--space-1)]">Used in recipes</p>
-                    {linkedRecipes.length === 0 ? (
-                      <p className="text-meta text-[var(--text-secondary)]">Not used in any recipe</p>
-                    ) : (
-                      <div className="space-y-[var(--space-1)]">
-                        {linkedRecipes.map((r, i) => (
-                          <div key={i} className="flex items-center justify-between text-meta">
-                            <span>
-                              {r.name}
-                              {r.variationName && (
-                                <span className="text-[var(--text-secondary)]"> ({r.variationName})</span>
-                              )}
-                            </span>
-                            <span className="text-[var(--text-secondary)]">
-                              {r.quantityPerServing} {ing.unit}/serving
-                            </span>
-                          </div>
-                        ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowSuppliersFor(
+                          showSuppliersFor === ing.id ? null : ing.id
+                        )
+                      }
+                      className="text-meta text-[var(--color-info)] font-medium"
+                    >
+                      {showSuppliersFor === ing.id
+                        ? "Hide all suppliers"
+                        : "Show all suppliers"}
+                    </button>
+                    {showSuppliersFor === ing.id && (
+                      <div className="mt-[var(--space-2)]">
+                        <IngredientSuppliersPanel
+                          ingredientId={ing.id}
+                          suppliers={ing.ingredientSuppliers}
+                          purchases={ing.ingredientPurchases}
+                          allSuppliers={suppliers}
+                          mode={isManager ? "manager" : "readonly"}
+                          enabledUnits={enabledUnits}
+                        />
                       </div>
                     )}
-
-                    <div className="mt-[var(--space-3)] pt-[var(--space-2)] border-t border-[var(--border-default)]">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setShowSuppliersFor(
-                            showSuppliersFor === ing.id ? null : ing.id
-                          )
-                        }
-                        className="text-meta text-[var(--color-info)] font-medium"
-                      >
-                        {showSuppliersFor === ing.id
-                          ? "Hide all suppliers"
-                          : "Show all suppliers"}
-                      </button>
-                      {showSuppliersFor === ing.id && (
-                        <div className="mt-[var(--space-2)]">
-                          <IngredientSuppliersPanel
-                            ingredientId={ing.id}
-                            suppliers={ing.ingredientSuppliers}
-                            purchases={ing.ingredientPurchases}
-                            allSuppliers={suppliers}
-                            mode={isManager ? "manager" : "readonly"}
-                            enabledUnits={enabledUnits}
-                          />
-                        </div>
-                      )}
-                    </div>
                   </div>
                 )}
               </>
@@ -806,6 +813,19 @@ export function InventoryList({
           onClose={() => setStaleDialog(null)}
         />
       )}
+
+      {/* Recipes-using dialog */}
+      <RecipesUsingDialog
+        open={recipesDialogIng !== null}
+        ingredientName={recipesDialogIng?.name ?? ""}
+        ingredientUnit={recipesDialogIng?.unit ?? ""}
+        loading={recipesDialogLoading}
+        recipes={recipesDialogList}
+        onClose={() => {
+          setRecipesDialogIng(null);
+          setRecipesDialogList([]);
+        }}
+      />
     </div>
   );
 }

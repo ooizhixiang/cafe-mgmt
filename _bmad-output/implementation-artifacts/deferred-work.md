@@ -501,3 +501,23 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **AC4 wording amended:** the spec's AC4 ("ALL four advanced fields visible on add-row regardless of toggle") asked for inputs that the existing add-row never had — Display/Snap/Container/Units-per-container have always been deferred to post-add editing. Treated as a spec misread; existing UX preserved by adjusting the add-row's `colSpan` placeholders to match the rendered column count. Real fix (if desired) would be to add 4 inline inputs to the add-row, which is bigger than this spec's scope.
   - Severity: low (UX preference, not a defect)
+
+## From spec-inventory-view-recipes-button (review iteration 1)
+
+- **Sub-recipe walking in `getRecipesForIngredient`.** The action only returns recipes that reference the ingredient as a DIRECT raw row. If Macchiato uses Fresh Milk Foam (sub-recipe) which uses Milk, querying "Milk" today shows nothing — Macchiato is invisible despite using milk indirectly. Walk the composite graph using the existing `expandRecipeToLeaves` helper to surface indirect uses.
+  - Severity: medium (correctness — usage analysis is misleading without it)
+
+- **`RecipesUsingDialog` lacks focus trap and focus return.** Tab can escape the dialog into the underlying inventory page; on close, focus drops to document body instead of the originating "Recipes" button. Same flaw exists in other dialogs in this project (StaleValueDialog, InventoryDetailDialog). Worth a project-wide a11y pass with a shared `useFocusTrap` hook.
+  - Severity: low (a11y polish; not unique to this change)
+
+- **`aria-label` instead of `aria-labelledby` on dialog title.** Dialog uses `aria-label="..."` rather than `aria-labelledby` pointing at the visible `<h2>`. WCAG-compliant but suboptimal — screen readers may announce a duplicated title.
+  - Severity: low (polish)
+
+- **Background scroll not locked when dialog open.** No `body { overflow: hidden }` toggle while dialog is mounted. Mobile users can scroll the inventory list behind the modal. Match pattern wherever other dialogs implement (or don't implement) it.
+  - Severity: low (mobile polish)
+
+- **Test coverage gaps:**
+  - **Error path**: when `getRecipesForIngredient` returns `{success: false}`, no test verifies the toast fires + dialog closes + loading state clears. Easy to add.
+  - **Loading state**: no test verifies the dialog renders the "Loading..." line during the in-flight fetch.
+  - **Race condition (stale-response discard)**: no test for the request-id guard added in iteration 1.
+  - Severity: low (each gap is small, but they cover real edges)
