@@ -92,8 +92,11 @@ export function RecipesUsingDialog({
         {!loading && recipes.length > 0 && (
           <ul className="space-y-[var(--space-2)]">
             {recipes.map((r) => (
+              // `id` is the recipe id and is shared across the recipe's base
+              // row and any variation rows that reference the same ingredient.
+              // Compose with `variationName` to keep keys unique within the list.
               <li
-                key={r.id}
+                key={`${r.id}:${r.variationName ?? ""}`}
                 className="flex items-center justify-between text-body"
               >
                 <span>
