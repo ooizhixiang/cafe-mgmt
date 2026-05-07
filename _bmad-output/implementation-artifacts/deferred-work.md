@@ -481,3 +481,23 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **Hard-coded mock dates in `comp.actions.flows.test.ts`, `daily-report.actions.test.ts`, `wastage.actions.flows.test.ts` decouple `getCafeToday` from `getCafeNow`.** If a future test changes the `getCafeNow` mock to a different KL day, `getCafeToday` will silently lie. Acceptable today since both mocks return the same hard-coded day; flag if test fixtures get split.
   - Severity: low (latent test fragility)
+
+## From spec-ingredients-table-fit-no-scroll (review iteration 1)
+
+- **Flash of hidden content (FOHC) on first paint when toggle preference is "true".** `useState(false)` + `useEffect`-based hydration means a user with advanced-columns enabled sees the default 9-column view for ~1 frame before the 13-column view renders. Acceptable for a manager-only page visited infrequently; could be polished with a `mounted` flag + skeleton if it becomes annoying.
+  - Severity: low (cosmetic, single frame)
+
+- **`min-w-[70px]` cost cell may overflow on multi-decimal values.** Spec tightened Cost from 90→70px to fit the default view at ~960px. The cost column can render values like `0.0050` (sub-cent) or `1234.5678` which won't fit cleanly. No regression test guards minimum legible width.
+  - Severity: low (visual; values still readable, just clip at extremes)
+
+- **Cell remount on toggle destroys focus / unsaved keystrokes.** Clicking "Hide advanced columns" while focused on a Snap/Container/Display/Units-per-container input wipes the cell from the tree. No data corruption, but unsaved local state is lost without warning.
+  - Severity: low (rare path; user must be mid-edit when toggling)
+
+- **`aria-pressed` + label phrasing creates a double negative.** Toggle button label flips between "Show…" and "Hide…", and `aria-pressed` flips with state. Screen readers can announce "Hide advanced columns, pressed" — confusing. Either drop `aria-pressed` or use a static label like "Advanced columns".
+  - Severity: low (a11y polish)
+
+- **Test coverage debt:** no test for the "Hide" path or for `setItem("…", "false")` write. A regression that only ever wrote "true" would slip through. Add when next touching the file.
+  - Severity: low
+
+- **AC4 wording amended:** the spec's AC4 ("ALL four advanced fields visible on add-row regardless of toggle") asked for inputs that the existing add-row never had — Display/Snap/Container/Units-per-container have always been deferred to post-add editing. Treated as a spec misread; existing UX preserved by adjusting the add-row's `colSpan` placeholders to match the rendered column count. Real fix (if desired) would be to add 4 inline inputs to the add-row, which is bigger than this spec's scope.
+  - Severity: low (UX preference, not a defect)

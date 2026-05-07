@@ -79,6 +79,11 @@ const suppliers = [{ id: "sup1", name: "Acme" }];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // jsdom shares one localStorage instance across tests; clear it so the
+  // advanced-columns toggle preference doesn't leak between cases.
+  try {
+    localStorage.clear();
+  } catch {}
 });
 
 function renderSpreadsheet(
@@ -206,6 +211,8 @@ describe("IngredientSpreadsheet — invalid numeric", () => {
 
   it("rejects non-integer input on snap, reverts, toasts 'Whole number required'", async () => {
     renderSpreadsheet();
+    // Snap is an advanced column hidden by default; reveal it first.
+    fireEvent.click(screen.getByRole("button", { name: /Show advanced columns/i }));
 
     const snapInput = screen.getByLabelText("snap Milk") as HTMLInputElement;
     expect(snapInput.value).toBe("5");
@@ -1120,5 +1127,100 @@ describe("IngredientSpreadsheet — unlock recomputes derived cost from FIFO lot
     });
     const costInput = screen.getByLabelText("cost Milk") as HTMLInputElement;
     expect(costInput.value).toBe("1.50");
+  });
+});
+
+// ─── Spec: advanced-columns toggle (Display / Snap / Container / Units/container) ───
+
+describe("IngredientSpreadsheet — advanced columns toggle", () => {
+  it("hides Display, Snap, Container, Units/container columnheaders by default", () => {
+    // Force fresh state: localStorage starts empty for this test.
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockReturnValue(null);
+
+    renderSpreadsheet();
+
+    expect(
+      screen.queryByRole("columnheader", { name: "Display" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("columnheader", { name: "Snap" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("columnheader", { name: "Container" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("columnheader", { name: "Units/container" })
+    ).toBeNull();
+
+    getItemSpy.mockRestore();
+  });
+
+  it("reveals the four advanced columnheaders after clicking the toggle", () => {
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockReturnValue(null);
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {});
+
+    renderSpreadsheet();
+
+    // Pre-condition: hidden by default
+    expect(
+      screen.queryByRole("columnheader", { name: "Display" })
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show advanced columns/i })
+    );
+
+    expect(
+      screen.getByRole("columnheader", { name: "Display" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Snap" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Container" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Units/container" })
+    ).toBeDefined();
+
+    // Persistence: the toggle should have written "true" to localStorage
+    expect(setItemSpy).toHaveBeenCalledWith(
+      "ingredients.showAdvancedColumns",
+      "true"
+    );
+
+    getItemSpy.mockRestore();
+    setItemSpy.mockRestore();
+  });
+
+  it("hydrates from localStorage and shows advanced columns from first paint", () => {
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation((key: string) =>
+        key === "ingredients.showAdvancedColumns" ? "true" : null
+      );
+
+    renderSpreadsheet();
+
+    expect(
+      screen.getByRole("columnheader", { name: "Display" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Snap" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Container" })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("columnheader", { name: "Units/container" })
+    ).toBeDefined();
+
+    getItemSpy.mockRestore();
   });
 });

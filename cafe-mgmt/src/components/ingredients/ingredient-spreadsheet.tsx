@@ -139,10 +139,37 @@ export function IngredientSpreadsheet({
     new Set()
   );
   const [filterOpen, setFilterOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Total visible column count, used by full-row colSpans (empty-state /
+  // no-results / expanded-suppliers / add-row placeholders) so they don't
+  // over-span the rendered header when advanced columns are hidden.
+  const colCount = showAdvanced ? 13 : 9;
   const filterPopoverRef = useRef<HTMLDivElement | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
+
+  // Hydrate the advanced-columns toggle from localStorage on mount. Wrapped in
+  // try/catch so SSR / private-mode / blocked-storage doesn't crash render.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("ingredients.showAdvancedColumns");
+      if (v === "true") setShowAdvanced(true);
+    } catch {}
+  }, []);
+
+  function toggleAdvanced() {
+    setShowAdvanced((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(
+          "ingredients.showAdvancedColumns",
+          String(next)
+        );
+      } catch {}
+      return next;
+    });
+  }
 
   // Categories shown in dropdown + popover: union of distinct (server snapshot) +
   // current local ingredient categories + permanent "Unassigned", sorted, deduped.
@@ -763,6 +790,14 @@ export function IngredientSpreadsheet({
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={toggleAdvanced}
+          aria-pressed={showAdvanced}
+          className="text-meta text-[var(--color-info)] font-medium whitespace-nowrap px-[var(--space-2)] py-[var(--space-1)] rounded border border-[var(--border-default)]"
+        >
+          {showAdvanced ? "− Hide advanced columns" : "+ Show advanced columns"}
+        </button>
       </div>
 
       <div
@@ -780,15 +815,19 @@ export function IngredientSpreadsheet({
                 Name
               </Th>
               <Th className="min-w-[80px]">Unit</Th>
-              <Th className="min-w-[100px]" title="Display unit on the inventory tab (within-dimension conversion only)">
-                Display
-              </Th>
-              <Th className="min-w-[90px]">Cost ($)</Th>
-              <Th className="min-w-[80px]">Snap</Th>
-              <Th className="min-w-[140px]">Container</Th>
+              {showAdvanced && (
+                <Th className="min-w-[100px]" title="Display unit on the inventory tab (within-dimension conversion only)">
+                  Display
+                </Th>
+              )}
+              <Th className="min-w-[70px]">Cost ($)</Th>
+              {showAdvanced && <Th className="min-w-[60px]">Snap</Th>}
+              {showAdvanced && <Th className="min-w-[140px]">Container</Th>}
               <Th className="min-w-[110px]">Category</Th>
-              <Th className="min-w-[100px]">Threshold</Th>
-              <Th className="min-w-[120px]">Units/container</Th>
+              <Th className="min-w-[80px]">Threshold</Th>
+              {showAdvanced && (
+                <Th className="min-w-[120px]">Units/container</Th>
+              )}
               <Th className="min-w-[120px]">Suppliers</Th>
               <Th className="w-[60px]"> </Th>
             </tr>
@@ -797,7 +836,7 @@ export function IngredientSpreadsheet({
             {ingredients.length === 0 && (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={colCount}
                   className="px-[var(--space-3)] py-[var(--space-4)] text-center text-body text-[var(--text-secondary)]"
                 >
                   No ingredients yet. Add your first one below.
@@ -807,7 +846,7 @@ export function IngredientSpreadsheet({
             {ingredients.length > 0 && visibleIngredients.length === 0 && (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={colCount}
                   className="px-[var(--space-3)] py-[var(--space-4)] text-center text-body text-[var(--text-secondary)]"
                 >
                   <span>No ingredients match</span>
@@ -875,47 +914,49 @@ export function IngredientSpreadsheet({
                       field="unit"
                       onSave={handleSaveCell}
                     />
-                    <td className="px-[var(--space-2)] py-1 align-middle">
-                      {(() => {
-                        const dim = dimensionOf(ing.unit);
-                        if (dim === null) {
-                          // Custom storage unit (e.g. "scoop") has no known
-                          // dimension — disable conversion picker and tell the
-                          // manager why so it doesn't read as a UI bug.
-                          return (
-                            <span
-                              className="text-meta text-[var(--text-secondary)]"
-                              title="Display conversion is only available for standard mass / volume / count units"
-                            >
-                              —
-                            </span>
+                    {showAdvanced && (
+                      <td className="px-[var(--space-2)] py-1 align-middle">
+                        {(() => {
+                          const dim = dimensionOf(ing.unit);
+                          if (dim === null) {
+                            // Custom storage unit (e.g. "scoop") has no known
+                            // dimension — disable conversion picker and tell the
+                            // manager why so it doesn't read as a UI bug.
+                            return (
+                              <span
+                                className="text-meta text-[var(--text-secondary)]"
+                                title="Display conversion is only available for standard mass / volume / count units"
+                              >
+                                —
+                              </span>
+                            );
+                          }
+                          // Drop the storage unit itself — "(same as unit)" already
+                          // covers that case; offering it twice is redundant UX.
+                          const options = compatibleUnits(ing.unit).filter(
+                            (u) => u !== ing.unit
                           );
-                        }
-                        // Drop the storage unit itself — "(same as unit)" already
-                        // covers that case; offering it twice is redundant UX.
-                        const options = compatibleUnits(ing.unit).filter(
-                          (u) => u !== ing.unit
-                        );
-                        return (
-                          <select
-                            aria-label={`Display unit for ${ing.name}`}
-                            value={ing.displayUnit ?? ""}
-                            onChange={(e) =>
-                              handleSaveDisplayUnit(ing, e.target.value)
-                            }
-                            disabled={isPending}
-                            className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1 text-meta disabled:opacity-50"
-                          >
-                            <option value="">(same as unit)</option>
-                            {options.map((u) => (
-                              <option key={u} value={u}>
-                                {u}
-                              </option>
-                            ))}
-                          </select>
-                        );
-                      })()}
-                    </td>
+                          return (
+                            <select
+                              aria-label={`Display unit for ${ing.name}`}
+                              value={ing.displayUnit ?? ""}
+                              onChange={(e) =>
+                                handleSaveDisplayUnit(ing, e.target.value)
+                              }
+                              disabled={isPending}
+                              className="w-full rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1 text-meta disabled:opacity-50"
+                            >
+                              <option value="">(same as unit)</option>
+                              {options.map((u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()}
+                      </td>
+                    )}
                     <td className="px-[var(--space-1)] py-1 align-middle">
                       <div className="flex items-center gap-[var(--space-1)]">
                         <button
@@ -959,19 +1000,23 @@ export function IngredientSpreadsheet({
                         )}
                       </div>
                     </td>
-                    <Cell
-                      key={`snap:${ing.id}`}
-                      ingredient={ing}
-                      field="snap"
-                      numeric
-                      onSave={handleSaveCell}
-                    />
-                    <Cell
-                      key={`container:${ing.id}`}
-                      ingredient={ing}
-                      field="container"
-                      onSave={handleSaveCell}
-                    />
+                    {showAdvanced && (
+                      <Cell
+                        key={`snap:${ing.id}`}
+                        ingredient={ing}
+                        field="snap"
+                        numeric
+                        onSave={handleSaveCell}
+                      />
+                    )}
+                    {showAdvanced && (
+                      <Cell
+                        key={`container:${ing.id}`}
+                        ingredient={ing}
+                        field="container"
+                        onSave={handleSaveCell}
+                      />
+                    )}
                     <Cell
                       key={`category:${ing.id}`}
                       ingredient={ing}
@@ -985,13 +1030,15 @@ export function IngredientSpreadsheet({
                       numeric
                       onSave={handleSaveCell}
                     />
-                    <Cell
-                      key={`upc:${ing.id}`}
-                      ingredient={ing}
-                      field="unitsPerContainer"
-                      numeric
-                      onSave={handleSaveCell}
-                    />
+                    {showAdvanced && (
+                      <Cell
+                        key={`upc:${ing.id}`}
+                        ingredient={ing}
+                        field="unitsPerContainer"
+                        numeric
+                        onSave={handleSaveCell}
+                      />
+                    )}
                     <td className="px-[var(--space-2)] py-1 align-middle">
                       <div className="flex items-center gap-[var(--space-3)]">
                         <button
@@ -1028,7 +1075,7 @@ export function IngredientSpreadsheet({
                   {isExpanded && (
                     <tr className="border-t border-[var(--border-default)] bg-[var(--bg-secondary)]">
                       <td
-                        colSpan={13}
+                        colSpan={colCount}
                         className="px-[var(--space-4)] py-[var(--space-3)]"
                       >
                         <IngredientSuppliersPanel
@@ -1077,9 +1124,16 @@ export function IngredientSpreadsheet({
               </td>
               {/* Display unit is configured after adding (needs the row's `unit`
                   to filter compatible options). Placeholder keeps the column
-                  count balanced. */}
-              <td className="px-[var(--space-2)] py-1"> </td>
-              <td colSpan={3} className="px-[var(--space-2)] py-1 text-meta text-[var(--text-secondary)]">
+                  count balanced. Hidden when advanced columns are off so the
+                  add-row's cell count matches the 9-column header. */}
+              {showAdvanced && <td className="px-[var(--space-2)] py-1"> </td>}
+              {/* "Configure cost, etc. after adding" placeholder spans Cost (always)
+                  + Snap + Container (advanced); colSpan shrinks to 1 when those
+                  two columns aren't rendered. */}
+              <td
+                colSpan={showAdvanced ? 3 : 1}
+                className="px-[var(--space-2)] py-1 text-meta text-[var(--text-secondary)]"
+              >
                 Configure cost, etc. after adding.
               </td>
               <td className="px-[var(--space-2)] py-1 align-middle">
@@ -1097,7 +1151,13 @@ export function IngredientSpreadsheet({
                   ))}
                 </select>
               </td>
-              <td colSpan={3} className="px-[var(--space-2)] py-1 text-meta text-[var(--text-secondary)]">
+              {/* "Set threshold and suppliers next" placeholder spans
+                  Threshold (always) + Units/container (advanced) + Suppliers
+                  (always); colSpan shrinks to 2 when Units/container is hidden. */}
+              <td
+                colSpan={showAdvanced ? 3 : 2}
+                className="px-[var(--space-2)] py-1 text-meta text-[var(--text-secondary)]"
+              >
                 Set threshold and suppliers next.
               </td>
               <td className="px-[var(--space-2)] py-1 text-center align-middle">
