@@ -120,9 +120,9 @@ describe("buildPickerOptions", () => {
     ]);
   });
 
-  it("prepends the current value as '(custom)' when not in the enabled list (legacy data)", () => {
+  it("prepends the current value as a plain legacy option when not in the enabled list", () => {
     const opts = buildPickerOptions(["kg", "g", "L"], "kgs");
-    expect(opts[0]).toEqual({ value: "kgs", label: "kgs (custom)", isLegacy: true });
+    expect(opts[0]).toEqual({ value: "kgs", label: "kgs", isLegacy: true });
     // Followed by the regular enabled options
     expect(opts.slice(1).map((o) => o.value)).toEqual(["kg", "g", "L"]);
   });
@@ -133,9 +133,9 @@ describe("buildPickerOptions", () => {
     expect(buildPickerOptions(["kg", "g"], "").length).toBe(2);
   });
 
-  it("returns just the legacy '(custom)' entry when no units are enabled and there's a current value", () => {
+  it("returns just the legacy entry when no units are enabled and there's a current value", () => {
     const opts = buildPickerOptions([], "kgs");
-    expect(opts).toEqual([{ value: "kgs", label: "kgs (custom)", isLegacy: true }]);
+    expect(opts).toEqual([{ value: "kgs", label: "kgs", isLegacy: true }]);
   });
 
   it("returns empty array when nothing is enabled and no current value", () => {

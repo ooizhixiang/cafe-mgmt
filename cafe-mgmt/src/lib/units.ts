@@ -84,8 +84,10 @@ export function validateEnabledUnitsList(
 /**
  * Helper for the picker: given the cafe's enabled list and the row's current
  * value, return the list to show in the dropdown. If the current value isn't
- * in the enabled list (legacy data, deprecated unit), prepend it labeled
- * "(custom)" so the form stays usable.
+ * in the enabled list (legacy data, deprecated unit), prepend it as a plain
+ * option so the form stays usable. `isLegacy` flags the option for callers
+ * that want to style it differently — the label itself is just the unit
+ * value (no "(custom)" suffix; that was visual noise).
  */
 export interface PickerOption {
   value: string;
@@ -109,7 +111,7 @@ export function buildPickerOptions(
   ) {
     options.unshift({
       value: currentValue,
-      label: `${currentValue} (custom)`,
+      label: currentValue,
       isLegacy: true,
     });
   }

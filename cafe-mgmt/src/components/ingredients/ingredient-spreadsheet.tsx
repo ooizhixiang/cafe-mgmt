@@ -912,6 +912,7 @@ export function IngredientSpreadsheet({
                       key={`unit:${ing.id}`}
                       ingredient={ing}
                       field="unit"
+                      enabledUnits={enabledUnits}
                       onSave={handleSaveCell}
                     />
                     {showAdvanced && (
@@ -1232,6 +1233,7 @@ function Cell({
   numeric = false,
   step,
   sticky = false,
+  enabledUnits,
   onSave,
 }: {
   ingredient: Ingredient;
@@ -1239,6 +1241,8 @@ function Cell({
   numeric?: boolean;
   step?: string;
   sticky?: boolean;
+  /** Required when `field === "unit"`; ignored otherwise. */
+  enabledUnits?: string[];
   // Patch 5: onSave is async and returns Promise<boolean>
   onSave: (id: string, field: CellField, value: string) => Promise<boolean>;
 }) {
@@ -1253,6 +1257,7 @@ function Cell({
         field={field}
         numeric={numeric}
         step={step}
+        enabledUnits={enabledUnits}
         onSave={onSave}
       />
     </td>
@@ -1264,12 +1269,15 @@ function CellInput({
   field,
   numeric = false,
   step,
+  enabledUnits,
   onSave,
 }: {
   ingredient: Ingredient;
   field: CellField;
   numeric?: boolean;
   step?: string;
+  /** Required when `field === "unit"`; ignored otherwise. */
+  enabledUnits?: string[];
   onSave: (id: string, field: CellField, value: string) => Promise<boolean>;
 }) {
   const initial = formatCellValue(ingredient, field);
@@ -1282,9 +1290,9 @@ function CellInput({
     lastSavedRef.current = initial;
   }, [initial]);
 
-  async function commit() {
-    if (value === lastSavedRef.current) return;
-    const attempted = value;
+  async function commit(nextValue: string = value) {
+    if (nextValue === lastSavedRef.current) return;
+    const attempted = nextValue;
     try {
       const ok = await onSave(ingredient.id, field, attempted);
       if (ok) {
@@ -1308,6 +1316,25 @@ function CellInput({
     }
   }
 
+  if (field === "unit") {
+    // Use the shared <UnitPicker> instead of free-text. Picker change is
+    // instant — there's no blur step, so funnel onChange straight through
+    // commit() (which still owns the optimistic-update / revert flow).
+    return (
+      <UnitPicker
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          // Pass `next` directly so commit doesn't race the setState.
+          void commit(next);
+        }}
+        enabledUnits={enabledUnits ?? []}
+        ariaLabel={`Unit for ${ingredient.name}`}
+        className="w-full min-h-[44px] rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-2 py-1 text-meta"
+      />
+    );
+  }
+
   return (
     <input
       ref={inputRef}
@@ -1317,7 +1344,7 @@ function CellInput({
       value={value}
       aria-label={`${field} ${ingredient.name}`}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
+      onBlur={() => commit()}
       onKeyDown={handleKeyDown}
       className="w-full min-h-[44px] rounded border border-transparent bg-transparent px-2 py-1 text-meta hover:border-[var(--border-default)] focus:border-[var(--color-info)] focus:bg-[var(--bg-primary)] outline-none"
     />

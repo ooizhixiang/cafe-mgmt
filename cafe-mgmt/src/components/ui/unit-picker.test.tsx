@@ -17,7 +17,7 @@ describe("UnitPicker", () => {
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["kg", "g", "L"]);
   });
 
-  it("prepends a '(custom)' option when value is not in the enabled list (legacy data)", () => {
+  it("prepends the current value as a plain legacy option when not in the enabled list", () => {
     render(
       <UnitPicker
         value="kgs"
@@ -29,7 +29,7 @@ describe("UnitPicker", () => {
     const select = screen.getByLabelText("Legacy unit") as HTMLSelectElement;
     expect(select.value).toBe("kgs");
     const optionTexts = Array.from(select.options).map((o) => o.textContent);
-    expect(optionTexts[0]).toBe("kgs (custom)");
+    expect(optionTexts[0]).toBe("kgs");
     expect(Array.from(select.options).map((o) => o.value)).toEqual([
       "kgs",
       "kg",

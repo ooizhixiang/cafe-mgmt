@@ -551,3 +551,25 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **Optimistic-update collision with edit-form typing.** If a manager opens the inline edit form (which seeds `editForm` from `ingredients`) AND simultaneously changes the unit picker, the optimistic `setIngredients` mutation can desync the open editForm's `unit` field. Rare interleaving.
   - Severity: low (real edge, low probability)
+
+## From spec-ingredients-unit-cell-dropdown (review iteration 1)
+
+- **Race condition on rapid unit picks compounds existing `handleSaveCell` flaw.** The unit cell now fires `commit` on every `<select>` change (instant) rather than on blur. Two rapid picks (mL → L → kg) issue overlapping saves; if pick #1 fails, its rollback uses `oldUnit` captured at function entry — clobbering pick #2's optimistic state. Same family of bug as `setManualCostOverride` flip-flop (already deferred). Pre-existing in `handleSaveCell` but newly easy to trigger.
+  - Severity: medium (only affects rapid-fire unit changes, rare in practice)
+  - Fix: same pattern as `/inventory` inline picker — per-cell request-id ref to suppress stale reverts; also needs `handleSaveCell` to capture `oldUnit` from latest state at rollback time, not at entry.
+
+- **`useEffect([initial])` clobbers in-flight optimistic value on parent re-render.** `CellInput` resets `value`/`lastSavedRef` whenever `initial` changes (= parent re-rendered with new `ingredient.unit`). If a save is mid-flight when the parent updates (any reason), the user's pending choice is overwritten. Pre-existing in `CellInput`; the unit picker's instant commit increases the window where it matters.
+  - Severity: low–medium (narrow timing; happy path is fine)
+  - Fix: `if (!pendingRef.current) { setValue(initial); ... }` guard.
+
+- **`enabledUnits` optional with `?? []` default in `Cell`/`CellInput`.** A future `<Cell field="unit">` caller forgetting the prop renders an empty dropdown silently. Today only one call site exists and passes the prop.
+  - Severity: low (works today; defensive nit for future)
+  - Fix: make `enabledUnits` required when `field === "unit"` via discriminated union.
+
+- **`enabledUnits` not memoized at call site.** A new array reference each parent render forces `UnitPicker` reconciliation. Cosmetic; would matter only on a very long table.
+  - Severity: low (perf nit)
+
+- **`commit()` overload encourages closure-stale reads in future callers.** The default-arg form (`nextValue: string = value`) works today but a future caller relying on `commit()` (no arg) will read the closed-over `value`, which can lag the latest user input under controlled-input edge cases (IME composition, etc.).
+  - Severity: low (narrow path; commented inline)
+
+- **"(custom)" suffix removed (iter 1, user direction).** Picker no longer labels legacy units with a `(custom)` suffix anywhere — `lbs` shows as just `lbs` even if not in `enabledUnits`. Matches user's explicit instruction; same change applies to `/inventory` inline picker AND the `/ingredients` cell picker since both use the shared `buildPickerOptions`. Trade: legacy/disabled units are no longer visually distinguished from enabled ones in the dropdown.

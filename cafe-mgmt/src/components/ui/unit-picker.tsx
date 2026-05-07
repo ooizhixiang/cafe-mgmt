@@ -18,7 +18,7 @@ interface Props {
  * Shared unit picker (`<select>`) used everywhere units are entered. Options
  * come from the cafe-managed `enabledUnits` list. If `value` isn't in that
  * list (legacy data, or a unit recently disabled in settings), the picker
- * prepends it as a "(custom)" option so the form stays usable — non-destructive.
+ * prepends it as a plain option so the form stays usable — non-destructive.
  */
 export function UnitPicker({
   value,

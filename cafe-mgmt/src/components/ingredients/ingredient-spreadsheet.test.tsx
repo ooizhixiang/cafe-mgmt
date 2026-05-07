@@ -88,13 +88,15 @@ beforeEach(() => {
 
 function renderSpreadsheet(
   ingredients = [baseIngredient, otherIngredient],
-  distinctCategories: string[] = ["Dairy"]
+  distinctCategories: string[] = ["Dairy"],
+  enabledUnits?: string[]
 ) {
   return render(
     <IngredientSpreadsheet
       initialIngredients={ingredients}
       suppliers={suppliers}
       distinctCategories={distinctCategories}
+      enabledUnits={enabledUnits}
     />
   );
 }
@@ -1222,5 +1224,78 @@ describe("IngredientSpreadsheet — advanced columns toggle", () => {
     ).toBeDefined();
 
     getItemSpy.mockRestore();
+  });
+});
+
+// ─── Spec: per-row unit cell is a <UnitPicker> constrained to enabledUnits ──
+
+describe("IngredientSpreadsheet — per-row unit cell is a UnitPicker", () => {
+  const milkRow = {
+    ...baseIngredient,
+    name: "Milk",
+    unit: "mL",
+  };
+
+  it("renders the unit cell as a <select> preselected to the row's unit and populated with enabledUnits", () => {
+    renderSpreadsheet([milkRow], ["Dairy"], ["g", "kg", "mL", "L", "each"]);
+
+    const select = screen.getByRole("combobox", {
+      name: /Unit for Milk/i,
+    }) as HTMLSelectElement;
+
+    // Preselected to the current row value
+    expect(select.value).toBe("mL");
+
+    // All 5 enabled units are present as options (in any order)
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    for (const u of ["g", "kg", "mL", "L", "each"]) {
+      expect(optionValues).toContain(u);
+    }
+  });
+
+  it("calls updateIngredient with (id, name, newUnit) when the picker changes value", async () => {
+    vi.mocked(updateIngredient).mockResolvedValue({
+      success: true,
+      data: undefined,
+    });
+
+    renderSpreadsheet([milkRow], ["Dairy"], ["g", "kg", "mL", "L", "each"]);
+
+    const select = screen.getByRole("combobox", {
+      name: /Unit for Milk/i,
+    }) as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: "L" } });
+
+    await waitFor(() => {
+      expect(updateIngredient).toHaveBeenCalledWith("ing-1", "Milk", "L");
+    });
+    // Optimistic update: the select reflects the new value immediately
+    expect(select.value).toBe("L");
+  });
+
+  it("reverts the unit when updateIngredient returns success:false", async () => {
+    vi.mocked(updateIngredient).mockResolvedValue({
+      success: false,
+      error: "Unauthorized",
+    });
+
+    renderSpreadsheet([milkRow], ["Dairy"], ["g", "kg", "mL", "L", "each"]);
+
+    const select = screen.getByRole("combobox", {
+      name: /Unit for Milk/i,
+    }) as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: "L" } });
+
+    await waitFor(() => {
+      expect(updateIngredient).toHaveBeenCalledWith("ing-1", "Milk", "L");
+    });
+    // Revert: handleSaveCell rolls back to the previous unit on failure.
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("combobox", { name: /Unit for Milk/i }) as HTMLSelectElement).value
+      ).toBe("mL");
+    });
   });
 });
