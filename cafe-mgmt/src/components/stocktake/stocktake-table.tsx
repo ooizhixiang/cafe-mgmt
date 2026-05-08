@@ -11,6 +11,7 @@ import {
 } from "@/actions/stocktake.actions";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { Check, Equal } from "lucide-react";
 
 interface Props {
   view: StocktakeView;
@@ -327,6 +328,9 @@ function ItemRow({
     item.countedQuantity !== null ? String(item.countedQuantity) : ""
   );
   const isCounted = item.countedQuantity !== null;
+  // Disable the tick when there's nothing in the input AND nothing was
+  // previously counted — there'd be no value to save.
+  const tickDisabled = disabled || (value === "" && !isCounted);
   return (
     <tr className="border-t border-[var(--border-default)]">
       <td className="px-[var(--space-2)] py-[var(--space-2)] align-middle">
@@ -354,19 +358,38 @@ function ItemRow({
           className="w-[100px] min-h-[40px] rounded border border-[var(--border-default)] bg-[var(--bg-primary)] px-[var(--space-2)] py-1 text-meta"
         />
       </td>
-      <td className="px-[var(--space-2)] py-[var(--space-2)] align-middle text-right">
-        <button
-          type="button"
-          onClick={() => onConfirm(item, value)}
-          disabled={disabled}
-          className={`rounded px-[var(--space-3)] py-[var(--space-1)] text-meta font-medium disabled:opacity-50 ${
-            isCounted
-              ? "border border-[var(--border-default)] text-[var(--text-secondary)]"
-              : "bg-[var(--color-info)] text-white"
-          }`}
-        >
-          {isCounted ? "Re-confirm" : "Confirm"}
-        </button>
+      <td className="px-[var(--space-2)] py-[var(--space-2)] align-middle">
+        <div className="flex items-center justify-end gap-[var(--space-1)]">
+          {/* Tick = save the typed counted quantity. */}
+          <button
+            type="button"
+            onClick={() => onConfirm(item, value)}
+            disabled={tickDisabled}
+            aria-label={isCounted ? `Re-confirm ${item.ingredientName}` : `Confirm ${item.ingredientName}`}
+            title={isCounted ? "Re-confirm" : "Confirm"}
+            className={`touch-target flex size-9 items-center justify-center rounded ${
+              isCounted
+                ? "border border-[var(--border-default)] text-[var(--text-secondary)]"
+                : "bg-[var(--color-success)] text-white"
+            } disabled:opacity-40`}
+          >
+            <Check size={16} />
+          </button>
+          {/* Mark unchanged = save expected as the counted value (no variance). */}
+          <button
+            type="button"
+            onClick={() => {
+              setValue(String(item.expectedQuantity));
+              onConfirm(item, String(item.expectedQuantity));
+            }}
+            disabled={disabled}
+            aria-label={`Mark ${item.ingredientName} as unchanged`}
+            title="Mark as unchanged (counted = expected)"
+            className="touch-target flex size-9 items-center justify-center rounded border border-[var(--border-default)] text-[var(--text-secondary)] disabled:opacity-40"
+          >
+            <Equal size={16} />
+          </button>
+        </div>
       </td>
     </tr>
   );

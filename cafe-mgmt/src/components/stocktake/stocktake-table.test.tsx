@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 
 describe("StocktakeTable", () => {
-  it("renders rows with name, SKU, barcode, expected qty, and a Confirm button that calls saveStocktakeItemCount", async () => {
+  it("renders rows with name, SKU, barcode, expected qty, and a tick icon button that calls saveStocktakeItemCount", async () => {
     vi.mocked(saveStocktakeItemCount).mockResolvedValue({
       success: true,
       data: { id: "item-1" },
@@ -94,13 +94,35 @@ describe("StocktakeTable", () => {
     ) as HTMLInputElement;
     fireEvent.change(milkInput, { target: { value: "4" } });
 
-    const confirmButtons = screen.getAllByRole("button", { name: /^Confirm$/ });
-    fireEvent.click(confirmButtons[0]);
+    // Tick icon = "Confirm Milk" (action button changed from text label
+    // to icon-only; aria-label drives the accessible name).
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Milk/i }));
 
     await waitFor(() =>
       expect(saveStocktakeItemCount).toHaveBeenCalledWith({
         itemId: "item-1",
         quantity: 4,
+      })
+    );
+  });
+
+  it("Mark as unchanged button saves expected as the counted value", async () => {
+    vi.mocked(saveStocktakeItemCount).mockResolvedValue({
+      success: true,
+      data: { id: "item-1" },
+    });
+
+    render(<StocktakeTable view={buildView()} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Mark Milk as unchanged/i })
+    );
+
+    await waitFor(() =>
+      expect(saveStocktakeItemCount).toHaveBeenCalledWith({
+        itemId: "item-1",
+        // buildView's Milk row sets expectedQuantity = 5 (see buildView).
+        quantity: 5,
       })
     );
   });
