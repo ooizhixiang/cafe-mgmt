@@ -63,6 +63,8 @@ model Cafe {
   ingredientSuppliers IngredientSupplier[]
   ingredientPurchases IngredientPurchase[]
   lotConsumptions     LotConsumption[]
+  stocktakes          Stocktake[]
+  inventoryAdjustments InventoryAdjustment[]
 }
 
 model User {
@@ -97,6 +99,11 @@ model User {
   salesEntries       SalesEntry[]         @relation("SalesCreator")
   salesVoided        SalesEntry[]         @relation("SalesVoider")
   ingredientPurchases IngredientPurchase[] @relation("PurchaseCreator")
+  stocktakesStarted   Stocktake[]          @relation("StocktakeStartedBy")
+  stocktakesCompleted Stocktake[]          @relation("StocktakeCompletedBy")
+  stocktakesCancelled Stocktake[]          @relation("StocktakeCancelledBy")
+  stocktakeItemsConfirmed StocktakeItem[]  @relation("StocktakeItemConfirmedBy")
+  inventoryAdjustments InventoryAdjustment[] @relation("InventoryAdjustmentCreator")
 
   @@index([cafeId])
   @@index([email])
@@ -161,6 +168,8 @@ model Ingredient {
   id                 String   @id @default(cuid())
   name               String
   unit               String
+  sku                String?
+  barcode            String?
   // Optional display-time conversion target (within-dimension). Inventory
   // surfaces convert stored quantities to this unit at render. Null = no
   // conversion (parity with pre-feature behavior).
@@ -186,6 +195,8 @@ model Ingredient {
   feedAlerts         FeedAlert[]
   recipeIngredients      RecipeIngredient[]
   variationIngredients   VariationIngredient[]
+  stocktakeItems         StocktakeItem[]
+  inventoryAdjustments   InventoryAdjustment[]
 
   @@index([cafeId])
 }
@@ -645,4 +656,76 @@ model PushSubscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ─── Stocktake (periodic count session) ─────────────────────
+
+enum StocktakeStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InventoryAdjustmentKind {
+  GAIN
+}
+
+model Stocktake {
+  id              String          @id @default(cuid())
+  cafeId          String
+  status          StocktakeStatus @default(IN_PROGRESS)
+  startedById     String
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  completedById   String?
+  cancelledAt     DateTime?
+  cancelledById   String?
+
+  cafe        Cafe            @relation(fields: [cafeId], references: [id])
+  startedBy   User            @relation("StocktakeStartedBy", fields: [startedById], references: [id])
+  completedBy User?           @relation("StocktakeCompletedBy", fields: [completedById], references: [id])
+  cancelledBy User?           @relation("StocktakeCancelledBy", fields: [cancelledById], references: [id])
+  items       StocktakeItem[]
+  adjustments InventoryAdjustment[]
+
+  @@index([cafeId, status])
+  @@index([cafeId, startedAt])
+}
+
+model StocktakeItem {
+  id               String    @id @default(cuid())
+  stocktakeId      String
+  ingredientId     String
+  expectedQuantity Int
+  countedQuantity  Int?
+  confirmedAt      DateTime?
+  confirmedById    String?
+
+  stocktake   Stocktake  @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+  ingredient  Ingredient @relation(fields: [ingredientId], references: [id])
+  confirmedBy User?      @relation("StocktakeItemConfirmedBy", fields: [confirmedById], references: [id])
+
+  @@unique([stocktakeId, ingredientId])
+  @@index([stocktakeId])
+  @@index([ingredientId])
+}
+
+model InventoryAdjustment {
+  id                  String                  @id @default(cuid())
+  cafeId              String
+  ingredientId        String
+  kind                InventoryAdjustmentKind @default(GAIN)
+  quantity            Int
+  dollarValueInCents  Int
+  stocktakeId         String?
+  createdById         String
+  createdAt           DateTime                @default(now())
+
+  cafe       Cafe        @relation(fields: [cafeId], references: [id])
+  ingredient Ingredient  @relation(fields: [ingredientId], references: [id])
+  stocktake  Stocktake?  @relation(fields: [stocktakeId], references: [id], onDelete: SetNull)
+  createdBy  User        @relation("InventoryAdjustmentCreator", fields: [createdById], references: [id])
+
+  @@index([cafeId, createdAt])
+  @@index([stocktakeId])
 }

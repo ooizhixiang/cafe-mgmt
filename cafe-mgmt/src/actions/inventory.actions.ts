@@ -26,6 +26,8 @@ const updateIngredientConfigSchema = z.object({
   category: z.string().max(50).nullable().optional(),
   lowStockThreshold: z.number().int().min(0).nullable().optional(),
   unitsPerContainer: z.number().int().min(1).nullable().optional(),
+  sku: z.string().max(100).nullable().optional(),
+  barcode: z.string().max(100).nullable().optional(),
   isPinned: z.boolean().optional(),
 });
 
@@ -939,7 +941,7 @@ const getInventoryLogSchema = z.object({
 });
 
 export type InventoryLogEntry = {
-  kind: "loss" | "add";
+  kind: "loss" | "add" | "adjustment";
   id: string;
   ingredientName: string;
   ingredientUnit: string;
@@ -950,6 +952,7 @@ export type InventoryLogEntry = {
    * Short description of WHY the entry exists, surfaced in the dashboard log.
    * - Loss (wastage): formatted `WastageReason` (e.g. "Spilled").
    * - Add (purchase): the supplier name (e.g. "Acme").
+   * - Adjustment (stocktake): "Stocktake adjustment".
    * Empty string when the source row is missing the underlying field.
    */
   description: string;
@@ -977,7 +980,7 @@ export async function getInventoryLog(
     const limit = parsed.data.limit ?? 30;
     const take = cursor + limit + 1;
 
-    const [wastageRows, purchaseRows] = await Promise.all([
+    const [wastageRows, purchaseRows, adjustmentRows] = await Promise.all([
       prisma.wastageEntry.findMany({
         where: { cafeId, voidedAt: null, deletedAt: null },
         orderBy: { createdAt: "desc" },
@@ -996,6 +999,12 @@ export async function getInventoryLog(
             },
           },
         },
+      }),
+      prisma.inventoryAdjustment.findMany({
+        where: { cafeId },
+        orderBy: { createdAt: "desc" },
+        take,
+        include: { ingredient: { select: { name: true, unit: true } } },
       }),
     ]);
 
@@ -1026,8 +1035,19 @@ export async function getInventoryLog(
         : "",
     }));
 
-    const merged = [...wastageEntries, ...purchaseEntries].sort((a, b) =>
-      a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
+    const adjustmentEntries: InventoryLogEntry[] = adjustmentRows.map((a) => ({
+      kind: "adjustment",
+      id: `adjustment:${a.id}`,
+      ingredientName: a.ingredient.name,
+      ingredientUnit: a.ingredient.unit,
+      quantity: a.quantity,
+      dollarValueInCents: a.dollarValueInCents,
+      createdAt: a.createdAt.toISOString(),
+      description: "Stocktake adjustment",
+    }));
+
+    const merged = [...wastageEntries, ...purchaseEntries, ...adjustmentEntries].sort(
+      (a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)
     );
 
     const pageEntries = merged.slice(cursor, cursor + limit);

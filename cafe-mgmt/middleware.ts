@@ -5,7 +5,7 @@ const PUBLIC_PATHS = ["/login", "/register", "/invite", "/forgot-password", "/re
 // `/inventory` is gone (route deleted); `/ingredients` is now the merged
 // page that staff can also visit (Count view) — page-level role gating
 // happens inside the page, not in middleware.
-const MANAGER_ONLY_PATHS = ["/settings"];
+const MANAGER_ONLY_PATHS = ["/settings", "/stocktake"];
 const SETUP_PATHS = ["/setup"];
 
 export default auth((req) => {

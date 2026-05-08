@@ -80,11 +80,18 @@ export function InventoryLog({ initialEntries, initialNextCursor }: Props) {
       ) : (
         <ul className="space-y-[var(--space-2)]">
           {entries.map((entry) => {
-            const isLoss = entry.kind === "loss";
-            const badgeColor = isLoss
-              ? "var(--color-urgent)"
-              : "var(--color-success)";
-            const badgeLabel = isLoss ? "Loss" : "Add";
+            const badgeColor =
+              entry.kind === "loss"
+                ? "var(--color-urgent)"
+                : entry.kind === "add"
+                  ? "var(--color-success)"
+                  : "var(--color-info)";
+            const badgeLabel =
+              entry.kind === "loss"
+                ? "Loss"
+                : entry.kind === "add"
+                  ? "Add"
+                  : "Adjust";
             return (
               <li
                 key={entry.id}

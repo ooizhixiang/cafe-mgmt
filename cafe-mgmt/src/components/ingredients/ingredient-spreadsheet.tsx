@@ -57,6 +57,8 @@ interface Ingredient {
   category: string | null;
   lowStockThreshold: number | null;
   unitsPerContainer: number | null;
+  sku: string | null;
+  barcode: string | null;
   isPinned: boolean;
   manualCostOverride: boolean;
   ingredientSuppliers: IngredientSupplierRow[];
@@ -76,7 +78,9 @@ type CellField =
   | "container"
   | "category"
   | "threshold"
-  | "unitsPerContainer";
+  | "unitsPerContainer"
+  | "sku"
+  | "barcode";
 
 const NUMERIC_FIELDS: CellField[] = [
   "cost",
@@ -113,6 +117,10 @@ function formatCellValue(ingredient: Ingredient, field: CellField): string {
       return ingredient.lowStockThreshold?.toString() ?? "";
     case "unitsPerContainer":
       return ingredient.unitsPerContainer?.toString() ?? "";
+    case "sku":
+      return ingredient.sku ?? "";
+    case "barcode":
+      return ingredient.barcode ?? "";
   }
 }
 
@@ -143,7 +151,7 @@ export function IngredientSpreadsheet({
   // Total visible column count, used by full-row colSpans (empty-state /
   // no-results / expanded-suppliers / add-row placeholders) so they don't
   // over-span the rendered header when advanced columns are hidden.
-  const colCount = showAdvanced ? 13 : 9;
+  const colCount = showAdvanced ? 15 : 9;
   const filterPopoverRef = useRef<HTMLDivElement | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -315,7 +323,9 @@ export function IngredientSpreadsheet({
       | { key: "containerProfile"; old: string | null; next: string | null }
       | { key: "category"; old: string | null; next: string | null }
       | { key: "lowStockThreshold"; old: number | null; next: number | null }
-      | { key: "unitsPerContainer"; old: number | null; next: number | null };
+      | { key: "unitsPerContainer"; old: number | null; next: number | null }
+      | { key: "sku"; old: string | null; next: string | null }
+      | { key: "barcode"; old: string | null; next: string | null };
 
     switch (field) {
       case "cost": {
@@ -403,6 +413,32 @@ export function IngredientSpreadsheet({
         };
         break;
       }
+      case "sku": {
+        const next = trimmed === "" ? null : trimmed;
+        if (next && next.length > 100) {
+          toast("SKU too long");
+          return false;
+        }
+        nextValue = {
+          key: "sku",
+          old: ingredient.sku,
+          next,
+        };
+        break;
+      }
+      case "barcode": {
+        const next = trimmed === "" ? null : trimmed;
+        if (next && next.length > 100) {
+          toast("Barcode too long");
+          return false;
+        }
+        nextValue = {
+          key: "barcode",
+          old: ingredient.barcode,
+          next,
+        };
+        break;
+      }
     }
 
     // Detect no-op
@@ -475,6 +511,12 @@ export function IngredientSpreadsheet({
         break;
       case "unitsPerContainer":
         payload.unitsPerContainer = nextValue.next;
+        break;
+      case "sku":
+        payload.sku = nextValue.next;
+        break;
+      case "barcode":
+        payload.barcode = nextValue.next;
         break;
     }
 
@@ -649,6 +691,8 @@ export function IngredientSpreadsheet({
           category,
           lowStockThreshold: null,
           unitsPerContainer: null,
+          sku: null,
+          barcode: null,
           isPinned: false,
           manualCostOverride: true,
           ingredientSuppliers: [],
@@ -828,6 +872,8 @@ export function IngredientSpreadsheet({
               {showAdvanced && (
                 <Th className="min-w-[120px]">Units/container</Th>
               )}
+              {showAdvanced && <Th className="min-w-[110px]">SKU</Th>}
+              {showAdvanced && <Th className="min-w-[110px]">Barcode</Th>}
               <Th className="min-w-[120px]">Suppliers</Th>
               <Th className="w-[60px]"> </Th>
             </tr>
@@ -1040,6 +1086,22 @@ export function IngredientSpreadsheet({
                         onSave={handleSaveCell}
                       />
                     )}
+                    {showAdvanced && (
+                      <Cell
+                        key={`sku:${ing.id}`}
+                        ingredient={ing}
+                        field="sku"
+                        onSave={handleSaveCell}
+                      />
+                    )}
+                    {showAdvanced && (
+                      <Cell
+                        key={`barcode:${ing.id}`}
+                        ingredient={ing}
+                        field="barcode"
+                        onSave={handleSaveCell}
+                      />
+                    )}
                     <td className="px-[var(--space-2)] py-1 align-middle">
                       <div className="flex items-center gap-[var(--space-3)]">
                         <button
@@ -1153,10 +1215,12 @@ export function IngredientSpreadsheet({
                 </select>
               </td>
               {/* "Set threshold and suppliers next" placeholder spans
-                  Threshold (always) + Units/container (advanced) + Suppliers
-                  (always); colSpan shrinks to 2 when Units/container is hidden. */}
+                  Threshold (always) + Units/container (advanced) + SKU
+                  (advanced) + Barcode (advanced) + Suppliers (always); colSpan
+                  is 5 when advanced columns are visible, 2 otherwise. SKU and
+                  Barcode can be added per-row after the ingredient is created. */}
               <td
-                colSpan={showAdvanced ? 3 : 2}
+                colSpan={showAdvanced ? 5 : 2}
                 className="px-[var(--space-2)] py-1 text-meta text-[var(--text-secondary)]"
               >
                 Set threshold and suppliers next.

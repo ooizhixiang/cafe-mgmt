@@ -8,6 +8,7 @@ import {
   Package,
   AlertTriangle,
   ClipboardList,
+  ClipboardCheck,
   Truck,
   UtensilsCrossed,
   Settings,
@@ -28,6 +29,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/ingredients", label: "Inventory", icon: Package },
+  { href: "/stocktake", label: "Stocktake", icon: ClipboardCheck, managerOnly: true },
   { href: "/wastage", label: "Wastage", icon: AlertTriangle },
   { href: "/daily-report", label: "Sales", icon: ClipboardList },
   { href: "/suppliers", label: "Suppliers", icon: Truck },

@@ -134,6 +134,8 @@ export default async function IngredientsPage() {
       category: ing.category,
       lowStockThreshold: ing.lowStockThreshold,
       unitsPerContainer: ing.unitsPerContainer,
+      sku: ing.sku,
+      barcode: ing.barcode,
       isPinned: ing.isPinned,
       manualCostOverride: ing.manualCostOverride,
       ingredientSuppliers: ing.ingredientSuppliers.map((link) => ({

@@ -642,3 +642,31 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **Test for asymmetric source pagination missing.** New tests cover the merge order and the where-clause filter, but not the case where (e.g.) wastage has 60 rows and purchases have 5 — paging through cursor=0,30,60 and asserting all 65 surface correctly with no duplicates.
   - Severity: low (coverage gap on the more interesting case)
+
+## From spec-stocktake-session-with-variance-audit (review iteration 1)
+
+- **HIGH: stocktake variance is logged as `WastageEntry { reason: INCORRECT }` with no `stocktakeId` link.** Wastage analytics conflate spillage/expired/incorrect physical losses with stocktake-driven count corrections. After every stocktake, wastage reports spike falsely. Fix: add `stocktakeId String?` to `WastageEntry`, OR add a new `WastageReason` enum value `STOCKTAKE` that wastage queries can filter out by default.
+  - Severity: medium-high (analytics noise, not data corruption)
+
+- **`Ingredient.id` foreign keys on `StocktakeItem` and `InventoryAdjustment` use `RESTRICT`.** Once any historical stocktake (even cancelled or 5-year-old completed) references an ingredient, deleting that ingredient is blocked. Likely undesirable. Change to `SetNull` (preserve stocktake row but lose ingredient reference) OR `Cascade` (delete the stocktake item too) once you decide which makes sense for audit.
+  - Severity: medium (operational pain when retiring ingredients)
+
+- **`saveStocktakeItemCount` accepts unbounded large ints.** A typo of `999999999` writes through; downstream `Math.round(variance × derivedCost)` can exceed PostgreSQL `INTEGER` (~2.1B cents). Add a sane upper bound (e.g. 1e9).
+  - Severity: low (typo hazard; bounded by ingredient unit ranges in practice)
+
+- **`requireRole` throws three distinct messages but actions only catch `"Unauthorized"`.** `"Unauthenticated"` and `"Account deactivated"` fall through to the generic `"Failed to ..."` and (for start/complete) get error-logged as system faults. Map all three to a clean error.
+  - Severity: low (cosmetic; no security impact)
+
+- **Cancel doesn't clear per-item `countedQuantity` / `confirmedAt`.** Cancelled stocktakes still show "counted" rows when revisited via `getStocktake`. By design (audit trail), but UI should label cancelled sessions as such.
+  - Severity: low (UX clarity)
+
+- **Search OR-query on `name` / `sku` / `barcode` with `mode: insensitive` triggers full table scan.** No indexes on `sku` / `barcode`. Fine at current scale; add indexes if cafes grow to thousands of ingredients.
+  - Severity: low (perf; data-dependent)
+
+- **Test gaps:** no test for the iter-1 race-guard (concurrent `completeStocktake` → only one writes); no test for the iter-1 expectedQuantity fallback (today's count missing → falls back to most recent prior). Worth adding.
+  - Severity: low (regression-detection gap)
+
+- **`completeStocktake` Decimal coercion `typeof ... === "number"` branch.** `lot.totalPriceInCents` is `Decimal` per schema; the typeof check is defensive but could be simplified. Cosmetic.
+  - Severity: low
+
+- **`startStocktake` doesn't prevent multiple concurrent IN_PROGRESS stocktakes.** Per user direction (`3 up to the user`) — multiple parallel sessions are allowed by spec. NOT a defect; documented for awareness.

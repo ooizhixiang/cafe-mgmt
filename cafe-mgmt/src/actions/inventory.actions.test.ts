@@ -10,6 +10,7 @@ vi.mock("@/lib/db", () => ({
     ingredientSupplier: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     ingredientPurchase: { create: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     wastageEntry: { findMany: vi.fn() },
+    inventoryAdjustment: { findMany: vi.fn() },
     errorLog: { create: vi.fn() },
     cafe: { findUnique: vi.fn() },
     inventoryCount: { findUnique: vi.fn(), findFirst: vi.fn(), upsert: vi.fn() },
@@ -77,6 +78,11 @@ beforeEach(() => {
   // an empty list so legacy tests that don't mock it still run; per-test
   // overrides supply real ingredient unit data.
   vi.mocked(prisma.ingredient.findMany).mockResolvedValue([] as never);
+  // Stocktake feature added inventoryAdjustment as a third source for
+  // getInventoryLog. Default to empty so pre-existing tests that don't mock it
+  // continue to compose wastage + purchase without a "method not a function" /
+  // undefined-promise crash inside Promise.all.
+  vi.mocked(prisma.inventoryAdjustment.findMany).mockResolvedValue([] as never);
 });
 
 // Test Zod schemas used in inventory actions
