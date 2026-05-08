@@ -11,15 +11,18 @@ interface Props {
 }
 
 // Absolute timestamp formatter — used on the server pass and on client first
-// paint so SSR and hydration agree. Locale-formatted short date+time.
+// paint so SSR and hydration agree. Hard-codes `en-US` because passing
+// `undefined` (default locale) produces different output server-side (Node)
+// vs client-side (browser locale) → React hydration mismatch warning.
 function absoluteTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "Asia/Kuala_Lumpur",
   });
 }
 
