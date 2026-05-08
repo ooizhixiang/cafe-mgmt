@@ -9,6 +9,7 @@ vi.mock("@/lib/db", () => ({
     ingredient: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     ingredientSupplier: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     ingredientPurchase: { create: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+    wastageEntry: { findMany: vi.fn() },
     errorLog: { create: vi.fn() },
     cafe: { findUnique: vi.fn() },
     inventoryCount: { findUnique: vi.fn(), findFirst: vi.fn(), upsert: vi.fn() },
@@ -45,6 +46,7 @@ import {
   detachPurchaseInvoice,
   getPurchaseHistory,
   updateIngredientDisplayUnit,
+  getInventoryLog,
 } from "./inventory.actions";
 
 // Prisma Decimal stub — mock rows go through `.toNumber()` and never run real
@@ -1603,3 +1605,101 @@ describe("updateIngredientDisplayUnit", () => {
     });
   });
 });
+
+// ─── getInventoryLog ──────────────────────────────────────
+
+describe("getInventoryLog", () => {
+  it("returns merged + sorted page (wastage + purchases interleaved by createdAt desc)", async () => {
+    // 2 wastage rows + 2 purchase rows with interleaved timestamps. Expected
+    // merged order is purely by createdAt desc.
+    vi.mocked(prisma.wastageEntry.findMany).mockResolvedValue([
+      {
+        id: "w2",
+        quantity: 5,
+        dollarValueInCents: 500,
+        createdAt: new Date("2026-05-01T12:00:00Z"),
+        reason: "SPILLED",
+        ingredient: { name: "Milk", unit: "mL" },
+      },
+      {
+        id: "w1",
+        quantity: 2,
+        dollarValueInCents: 200,
+        createdAt: new Date("2026-05-01T09:00:00Z"),
+        reason: "EXPIRED",
+        ingredient: { name: "Sugar", unit: "g" },
+      },
+    ] as never);
+
+    vi.mocked(prisma.ingredientPurchase.findMany).mockResolvedValue([
+      {
+        id: "p2",
+        quantity: 1000,
+        totalPriceInCents: dec(1500),
+        createdAt: new Date("2026-05-01T11:00:00Z"),
+        ingredientSupplier: {
+          ingredient: { name: "Coffee", unit: "g" },
+          supplier: { name: "Acme" },
+        },
+      },
+      {
+        id: "p1",
+        quantity: 500,
+        totalPriceInCents: dec(800),
+        createdAt: new Date("2026-05-01T10:00:00Z"),
+        ingredientSupplier: {
+          ingredient: { name: "Tea", unit: "g" },
+          supplier: { name: "Beta" },
+        },
+      },
+    ] as never);
+
+    const result = await getInventoryLog({ cursor: 0, limit: 30 });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    // Expected merge order by createdAt desc:
+    // w2 12:00 (loss), p2 11:00 (add), p1 10:00 (add), w1 09:00 (loss)
+    const ids = result.data.entries.map((e) => e.id);
+    expect(ids).toEqual([
+      "wastage:w2",
+      "purchase:p2",
+      "purchase:p1",
+      "wastage:w1",
+    ]);
+
+    // Shape spot-check
+    const first = result.data.entries[0]!;
+    expect(first.kind).toBe("loss");
+    expect(first.ingredientName).toBe("Milk");
+    expect(first.ingredientUnit).toBe("mL");
+    expect(first.quantity).toBe(5);
+    expect(first.dollarValueInCents).toBe(500);
+    // Wastage entries surface the formatted WastageReason as `description`.
+    expect(first.description).toBe("Spilled");
+
+    const purchase = result.data.entries[1]!;
+    expect(purchase.kind).toBe("add");
+    expect(purchase.dollarValueInCents).toBe(1500);
+    // Purchase entries surface the supplier name as `description`.
+    expect(purchase.description).toBe("Acme");
+
+    // 4 entries < limit 30 → no more pages
+    expect(result.data.nextCursor).toBeNull();
+  });
+
+  it("excludes voided + soft-deleted wastage via the where clause", async () => {
+    vi.mocked(prisma.wastageEntry.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.ingredientPurchase.findMany).mockResolvedValue([] as never);
+
+    const result = await getInventoryLog({ cursor: 0, limit: 30 });
+    expect(result.success).toBe(true);
+
+    const wastageCallArg = vi.mocked(prisma.wastageEntry.findMany).mock.calls[0]![0]!;
+    const where = (wastageCallArg as { where: Record<string, unknown> }).where;
+    expect(where.cafeId).toBe("cafe-1");
+    expect(where.voidedAt).toBeNull();
+    expect(where.deletedAt).toBeNull();
+  });
+});
+

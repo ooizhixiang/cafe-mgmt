@@ -931,6 +931,118 @@ export async function detachPurchaseInvoice(
   }
 }
 
+// ─── Inventory Log (Dashboard right column) ────────────────
+
+const getInventoryLogSchema = z.object({
+  cursor: z.number().int().min(0).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export type InventoryLogEntry = {
+  kind: "loss" | "add";
+  id: string;
+  ingredientName: string;
+  ingredientUnit: string;
+  quantity: number;
+  dollarValueInCents: number;
+  createdAt: string;
+  /**
+   * Short description of WHY the entry exists, surfaced in the dashboard log.
+   * - Loss (wastage): formatted `WastageReason` (e.g. "Spilled").
+   * - Add (purchase): the supplier name (e.g. "Acme").
+   * Empty string when the source row is missing the underlying field.
+   */
+  description: string;
+};
+
+const WASTAGE_REASON_LABEL: Record<string, string> = {
+  SPILLED: "Spilled",
+  EXPIRED: "Expired",
+  INCORRECT: "Incorrect",
+};
+
+export async function getInventoryLog(
+  input: z.infer<typeof getInventoryLogSchema> = {}
+): Promise<
+  ActionResult<{ entries: InventoryLogEntry[]; nextCursor: number | null }>
+> {
+  try {
+    const session = await requireAuth();
+    const cafeId = session.user.cafeId;
+    const parsed = getInventoryLogSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: "Invalid input" };
+    }
+    const cursor = parsed.data.cursor ?? 0;
+    const limit = parsed.data.limit ?? 30;
+    const take = cursor + limit + 1;
+
+    const [wastageRows, purchaseRows] = await Promise.all([
+      prisma.wastageEntry.findMany({
+        where: { cafeId, voidedAt: null, deletedAt: null },
+        orderBy: { createdAt: "desc" },
+        take,
+        include: { ingredient: { select: { name: true, unit: true } } },
+      }),
+      prisma.ingredientPurchase.findMany({
+        where: { cafeId },
+        orderBy: { createdAt: "desc" },
+        take,
+        include: {
+          ingredientSupplier: {
+            select: {
+              ingredient: { select: { name: true, unit: true } },
+              supplier: { select: { name: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const wastageEntries: InventoryLogEntry[] = wastageRows.map((w) => ({
+      kind: "loss",
+      id: `wastage:${w.id}`,
+      ingredientName: w.ingredient.name,
+      ingredientUnit: w.ingredient.unit,
+      quantity: w.quantity,
+      dollarValueInCents: w.dollarValueInCents,
+      createdAt: w.createdAt.toISOString(),
+      description: WASTAGE_REASON_LABEL[w.reason] ?? String(w.reason),
+    }));
+
+    const purchaseEntries: InventoryLogEntry[] = purchaseRows.map((p) => ({
+      kind: "add",
+      id: `purchase:${p.id}`,
+      ingredientName: p.ingredientSupplier.ingredient.name,
+      ingredientUnit: p.ingredientSupplier.ingredient.unit,
+      quantity: p.quantity,
+      dollarValueInCents:
+        typeof p.totalPriceInCents === "number"
+          ? p.totalPriceInCents
+          : p.totalPriceInCents.toNumber(),
+      createdAt: p.createdAt.toISOString(),
+      description: p.ingredientSupplier.supplier?.name ?? "",
+    }));
+
+    const merged = [...wastageEntries, ...purchaseEntries].sort((a, b) =>
+      a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
+    );
+
+    const pageEntries = merged.slice(cursor, cursor + limit);
+    const nextCursor =
+      pageEntries.length === limit && merged.length > cursor + limit
+        ? cursor + limit
+        : null;
+
+    return { success: true, data: { entries: pageEntries, nextCursor } };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { success: false, error: "Unauthorized" };
+    }
+    return { success: false, error: "Failed to load inventory log" };
+  }
+}
+
 // ─── Per-Ingredient Display Unit ───────────────────────────
 
 const updateIngredientDisplayUnitSchema = z.object({

@@ -619,3 +619,26 @@ Items surfaced during reviews but classified out-of-scope of the originating spe
 
 - **Test for click-persistence (writing localStorage on toggle) missing.** Existing 4 tests cover read-side hydration; no test asserts that clicking the toggle writes the new value. Easy to add when next touching this file.
   - Severity: low (coverage gap)
+
+## From spec-dashboard-inventory-log-sidebar (review iteration 1)
+
+- **Offset-based pagination re-scans every prior page.** Each "Show more" click re-fetches `cursor + limit + 1` rows from BOTH the wastage and purchase tables, then merges/slices in app code. Page 10 reads ~600 rows from each table to return 30. Spec accepted this trade as "fine at this volume" and the merge IS correct for asymmetric sources, but a keyset cursor (e.g. `lastCreatedAt` per source) is the proper shape if the data ever grows substantially.
+  - Severity: low (works at current scale; perf nit only)
+
+- **Sort tie-breaking on identical `createdAt`.** Two entries with the exact same `createdAt` (sub-ms or bulk insert) currently sort by JS array order. Across paginated requests the tie order can flip — same row could appear on two pages or be skipped at the boundary. Add `id` as a stable tiebreaker.
+  - Severity: low (rare; depends on insert pattern)
+
+- **Pagination during concurrent inserts can duplicate.** New rows inserted between page 1 and page 2 fetches shift the offset window — same entry may render twice on cursor=30. Inherent to offset pagination. Accepted.
+  - Severity: low (low-volume; user-visible only on rapid concurrent inserts)
+
+- **`relativeTime` clamps clock skew silently.** `Math.max(0, …)` masks negative diffs as "just now", hiding bugs (server timestamps in the future, wrong tz). Cosmetic; flag if it ever lies about a recent entry.
+  - Severity: low
+
+- **Loss/Add badge has no semantic role / aria-label.** Relies on color + text only. Screen-reader users can read the text "Loss"/"Add" but have no live region or status role to announce. Same nit applies elsewhere in the app's badge patterns.
+  - Severity: low (a11y polish)
+
+- **`getInventoryLog` doesn't cap unbounded `cursor` growth.** Caller could pass `cursor=10000`; server happily reads `cursor + limit + 1` from each table. Add a max cursor (e.g. 5000) or convert to keyset entirely.
+  - Severity: low (DOS-ish but only by authed staff)
+
+- **Test for asymmetric source pagination missing.** New tests cover the merge order and the where-clause filter, but not the case where (e.g.) wastage has 60 rows and purchases have 5 — paging through cursor=0,30,60 and asserting all 65 surface correctly with no duplicates.
+  - Severity: low (coverage gap on the more interesting case)
