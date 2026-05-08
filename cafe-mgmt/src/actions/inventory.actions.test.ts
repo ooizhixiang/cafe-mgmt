@@ -1681,8 +1681,8 @@ describe("getInventoryLog", () => {
     const purchase = result.data.entries[1]!;
     expect(purchase.kind).toBe("add");
     expect(purchase.dollarValueInCents).toBe(1500);
-    // Purchase entries surface the supplier name as `description`.
-    expect(purchase.description).toBe("Acme");
+    // Purchase entries surface the supplier name (prefixed) as `description`.
+    expect(purchase.description).toBe("Bought from Acme");
 
     // 4 entries < limit 30 → no more pages
     expect(result.data.nextCursor).toBeNull();

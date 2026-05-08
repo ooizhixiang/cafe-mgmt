@@ -1021,7 +1021,9 @@ export async function getInventoryLog(
           ? p.totalPriceInCents
           : p.totalPriceInCents.toNumber(),
       createdAt: p.createdAt.toISOString(),
-      description: p.ingredientSupplier.supplier?.name ?? "",
+      description: p.ingredientSupplier.supplier?.name
+        ? `Bought from ${p.ingredientSupplier.supplier.name}`
+        : "",
     }));
 
     const merged = [...wastageEntries, ...purchaseEntries].sort((a, b) =>
