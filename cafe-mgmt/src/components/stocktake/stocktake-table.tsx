@@ -31,7 +31,20 @@ export function StocktakeTable({ view }: Props) {
     setSearchInput(view.search);
   }, [view.search]);
 
-  const { stocktake, items, page, totalPages, totalRecords, tab } = view;
+  // Lift items + counter state into client memory so Confirm / Mark
+  // Unchanged can update the row in place WITHOUT a full page refresh.
+  // Server-side `view` is still the source of truth on tab/page/search
+  // change — `useEffect` resyncs from props when those URL params land.
+  const [items, setItems] = useState(view.items);
+  const [countedItems, setCountedItems] = useState(view.stocktake.countedItems);
+  const [uncountedItems, setUncountedItems] = useState(view.stocktake.uncountedItems);
+  useEffect(() => {
+    setItems(view.items);
+    setCountedItems(view.stocktake.countedItems);
+    setUncountedItems(view.stocktake.uncountedItems);
+  }, [view.items, view.stocktake.countedItems, view.stocktake.uncountedItems]);
+
+  const { stocktake, page, totalPages, totalRecords, tab } = view;
   const isFinalized = stocktake.status !== "IN_PROGRESS";
 
   function buildHref(overrides: {
@@ -72,6 +85,18 @@ export function StocktakeTable({ view }: Props) {
       toast("Enter a non-negative whole number");
       return;
     }
+    // Optimistic update: flip the row to "counted" in client state right
+    // away so the click feels instant. Track whether this row was already
+    // counted so we can keep the totals correct, and revert on failure.
+    const wasCounted = item.countedQuantity !== null;
+    const previous = item.countedQuantity;
+    setItems((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, countedQuantity: qty } : i))
+    );
+    if (!wasCounted) {
+      setCountedItems((c) => c + 1);
+      setUncountedItems((u) => Math.max(0, u - 1));
+    }
     startTransition(async () => {
       const result = await saveStocktakeItemCount({
         itemId: item.id,
@@ -79,14 +104,24 @@ export function StocktakeTable({ view }: Props) {
       });
       if (!result.success) {
         toast(result.error);
-        return;
+        // Revert optimistic update.
+        setItems((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, countedQuantity: previous } : i
+          )
+        );
+        if (!wasCounted) {
+          setCountedItems((c) => Math.max(0, c - 1));
+          setUncountedItems((u) => u + 1);
+        }
       }
-      router.refresh();
     });
   }
 
   function handleMarkCompleted() {
-    if (stocktake.uncountedItems > 0) {
+    // Use the live local counter so the dialog matches what the user just
+    // clicked through optimistically.
+    if (uncountedItems > 0) {
       setConfirmComplete(true);
     } else {
       runComplete();
@@ -130,8 +165,7 @@ export function StocktakeTable({ view }: Props) {
           <h1 className="text-headline">Stocktake</h1>
           <p className="text-meta text-[var(--text-secondary)]">
             Started by {stocktake.startedByName} · {stocktake.totalItems} items
-            · {stocktake.countedItems} counted · {stocktake.uncountedItems}{" "}
-            uncounted
+            · {countedItems} counted · {uncountedItems} uncounted
           </p>
         </div>
         <div className="flex items-center gap-[var(--space-2)]">
@@ -159,12 +193,12 @@ export function StocktakeTable({ view }: Props) {
         <TabLink
           href={buildHref({ tab: "uncounted", page: 1 })}
           active={tab === "uncounted"}
-          label={`Uncounted Items (${stocktake.uncountedItems})`}
+          label={`Uncounted Items (${uncountedItems})`}
         />
         <TabLink
           href={buildHref({ tab: "counted", page: 1 })}
           active={tab === "counted"}
-          label={`Counted Items (${stocktake.countedItems})`}
+          label={`Counted Items (${countedItems})`}
         />
       </div>
 
